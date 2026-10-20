@@ -77,7 +77,9 @@ function messaggioPerStato(stato: number, dettaglio?: string): string {
 async function richiesta(token: string, percorso: string, init: RequestInit = {}, accept?: string): Promise<Response> {
   let risposta: Response
   try {
-    risposta = await fetch(`${base()}${percorso}`, { ...init, headers: { ...intestazioni(token, accept), ...(init.headers ?? {}) } })
+    // no-store: GitHub fa tenere al browser le letture per 60 secondi; senza questo, dopo il salvataggio di un collega
+    // si rileggerebbe la versione vecchia (con lo SHA vecchio) e ogni nuovo tentativo di salvataggio andrebbe in conflitto
+    risposta = await fetch(`${base()}${percorso}`, { cache: 'no-store', ...init, headers: { ...intestazioni(token, accept), ...(init.headers ?? {}) } })
   } catch {
     throw new ErroreGitHub('Connessione a GitHub non riuscita: verificare la rete.', 0)
   }

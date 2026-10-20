@@ -2,8 +2,9 @@
  * Canone mensile in vigore in un dato mese, tenendo conto degli aumenti ISTAT registrati
  * nel registro annuale (una nuova annualità con "inizio annualità" cambia il canone da quel mese).
  */
-import type { Annualita, Contratto } from './tipi'
+import type { Annualita, Contratto, Movimento } from './tipi'
 import { statoIva } from './tipi'
+import { formattaEuro } from './utils/formato'
 
 export interface CanoneMese {
   imponibile_cent: number | null
@@ -53,16 +54,55 @@ export function canoneMensilePer(c: Contratto, tutte: Annualita[], mese: string)
   return conIva(c, c.canone_mensile_cent, null)
 }
 
-/** Gli scaglioni di canone che toccano l'anno indicato (per mostrare "dal mm/aaaa" quando c'è un aumento in corso d'anno). */
-export function scaglioniAnno(c: Contratto, tutte: Annualita[], anno: number): CanoneMese[] {
-  const mesi = Array.from({ length: 12 }, (_, i) => `${anno}-${String(i + 1).padStart(2, '0')}`)
-  const out: CanoneMese[] = []
-  for (const m of mesi) {
-    const k = canoneMensilePer(c, tutte, m)
-    const ultimo = out[out.length - 1]
-    if (!ultimo || ultimo.totale_cent !== k.totale_cent || ultimo.dal !== k.dal) out.push(k)
+/**
+ * Ultimo cambio di canone in vigore entro il mese "AAAA-MM": da quando vale il canone attuale e quanto era prima.
+ * Le annualità che lasciano il canone invariato (ISTAT non applicato) non contano: si risale all'ultimo aumento vero,
+ * anche se è di un anno precedente. null se il canone non è mai cambiato.
+ */
+export function ultimoAumento(c: Contratto, tutte: Annualita[], mese: string): { dal: string; precedente: CanoneMese } | null {
+  const anns = annualitaDi(c, tutte).filter((a) => a.data_inizio.slice(0, 7) <= mese)
+  if (!anns.length) return null
+  const valori = [anns[0].canone_mensile_precedente_cent ?? c.canone_mensile_cent, ...anns.map((a) => a.canone_mensile_nuovo_cent)]
+  for (let i = valori.length - 1; i > 0; i--) {
+    if (valori[i] !== valori[i - 1]) return { dal: anns[i - 1].data_inizio.slice(0, 7), precedente: conIva(c, valori[i - 1], null) }
   }
-  return out
+  return null
+}
+
+/**
+ * Dopo il salvataggio di un'annualità che cambia il canone (aumento ISTAT): i canoni già registrati nei mesi in cui vale
+ * (dall'inizio dell'annualità fino all'inizio della successiva) passano al nuovo importo e lo stato si ricalcola, così un mese
+ * già pagato con l'importo vecchio diventa "incassato in parte". Si toccano solo i mesi con l'imponibile uguale a un canone
+ * vecchio (`vecchi`): quelli con un importo diverso inserito a mano restano com'erano. Se c'è già la fattura, resta e si
+ * aggiunge una nota. Restituisce l'elenco aggiornato e i mesi cambiati.
+ */
+export function adeguaCanoniRegistrati(
+  movimenti: Movimento[], annualita: Annualita, tutte: Annualita[], vecchi: Array<number | null | undefined>,
+  campiModifica: Pick<Movimento, 'modificato_il' | 'modificato_da'>,
+): { record: Movimento[]; mesi: string[] } {
+  const nuovo = annualita.canone_mensile_nuovo_cent
+  const daCambiare = vecchi.filter((x): x is number => x != null && x !== nuovo)
+  if (nuovo == null || !annualita.data_inizio || !daCambiare.length) return { record: movimenti, mesi: [] }
+  const dal = annualita.data_inizio.slice(0, 7)
+  const successiva = tutte
+    .filter((a) => a.contratto_id === annualita.contratto_id && a.id !== annualita.id && !a.eliminato_il && a.data_inizio && a.data_inizio > annualita.data_inizio)
+    .sort((a, b) => a.data_inizio.localeCompare(b.data_inizio))[0]
+  const al = successiva?.data_inizio.slice(0, 7)
+  const mesi: string[] = []
+  const record = movimenti.map((m) => {
+    if (m.eliminato_il || m.tipo !== 'canone' || m.contratto_id !== annualita.contratto_id || m.stato === 'stornato') return m
+    if (m.competenza < dal || (al && m.competenza >= al) || m.imponibile_cent == null || !daCambiare.includes(m.imponibile_cent)) return m
+    const iva = r0(nuovo * ((m.iva_percento ?? 0) / 100))
+    const dovuto = nuovo + iva
+    const inc = m.incassato_cent ?? 0
+    const stato = inc <= 0 ? 'da_incassare' : inc < dovuto ? 'parziale' : 'incassato'
+    const nota = m.numero_fattura
+      ? `Adeguamento ISTAT ${annualita.anno}: dovuto da ${formattaEuro(m.dovuto_cent)} a ${formattaEuro(dovuto)}; fattura n. ${m.numero_fattura} emessa sull'importo precedente, differenza ${formattaEuro(dovuto - (m.dovuto_cent ?? 0))} da fatturare`
+      : `Adeguamento ISTAT ${annualita.anno}: dovuto da ${formattaEuro(m.dovuto_cent)} a ${formattaEuro(dovuto)}`
+    mesi.push(m.competenza)
+    return { ...m, imponibile_cent: nuovo, iva_cent: iva, dovuto_cent: dovuto, stato, note: [m.note, nota].filter(Boolean).join(' · '), ...campiModifica }
+  })
+  return { record, mesi: mesi.sort() }
 }
 
 /** "1.220,00 € (1.000,00 + IVA 220,00)" oppure solo il totale se non c'è IVA. */

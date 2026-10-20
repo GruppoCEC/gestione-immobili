@@ -9,7 +9,8 @@ import { puoVedere } from '../lib/permessi'
 import { FinestraF24, FinestraLetteraIstat } from './Documenti'
 import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
 import { inizioAnnualita, regoleImposta } from '../lib/imposta'
-import { SI_NO, TIPI_COMUNICAZIONE, TIPOLOGIE_CONTRATTO, etichettaDi, inCedolare, statoIva, type Allegato, type Comunicazione, type Annualita, type Conduttore, type Contratto, type Immobile, type Opzione, type Societa } from '../lib/tipi'
+import { adeguaCanoniRegistrati } from '../lib/canone'
+import { SI_NO, TIPI_COMUNICAZIONE, TIPOLOGIE_CONTRATTO, etichettaDi, inCedolare, statoIva, type Allegato, type Comunicazione, type Annualita, type Conduttore, type Contratto, type Immobile, type Movimento, type Opzione, type Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaData, formattaEuro } from '../lib/utils/formato'
 import Allegati from './Allegati'
@@ -70,13 +71,15 @@ interface Props {
 
 export default function RegistroAnnuale({ contratto, descrizione }: Props) {
   const { token, nome } = useSessioneAttiva()
-  const { dati } = useCollezioni(['annualita', 'allegati', 'immobili', 'societa', 'conduttori', 'comunicazioni'])
+  const { dati } = useCollezioni(['annualita', 'allegati', 'immobili', 'societa', 'conduttori', 'comunicazioni', 'movimenti'])
   const cedolare = inCedolare(contratto)
   const vedeDocumenti = puoVedere(useUtente(), 'comunicazioni')
   const [f24, setF24] = useState<string | null>(null)
   const [lettera, setLettera] = useState<string | null>(null)
   const [aperta, setAperta] = useState<Partial<Annualita> | null>(null)
+  const [adeguati, setAdeguati] = useState<{ anno: number; mesi: string[]; importo: number | null } | null>(null)
 
+  const movimenti = dati<Movimento>('movimenti')
   const righe = attivi(dati<Annualita>('annualita')).filter((a) => a.contratto_id === contratto.id).sort((a, b) => a.anno - b.anno)
 
   function nuova(): Partial<Annualita> {
@@ -132,10 +135,26 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
 
   async function salva(v: Partial<Annualita>) {
     const esistente = !!v.id
-    await aggiorna<Annualita>(token, 'annualita', (r) => esistente
+    const prima = righe.find((x) => x.id === v.id)
+    const nuovoRecord = esistente ? null : { ...nuova(), ...v, ...campiNuovo(nome) } as Annualita
+    const tutte = await aggiorna<Annualita>(token, 'annualita', (r) => esistente
       ? r.map((x) => (x.id === v.id ? { ...x, ...v, ...campiModifica(nome) } as Annualita : x))
-      : [...r, { ...nuova(), ...v, ...campiNuovo(nome) } as Annualita],
+      : [...r, nuovoRecord!],
     `${nome}: ${esistente ? 'modifica' : 'nuova'} annualità ${v.anno} di ${descrizione}`)
+    // Canone cambiato: i mesi già registrati da questa annualità in poi passano al nuovo importo
+    const salvata = tutte.find((x) => x.id === (v.id ?? nuovoRecord!.id))
+    if (salvata) {
+      const vecchi = [salvata.canone_mensile_precedente_cent, prima?.canone_mensile_precedente_cent, prima?.canone_mensile_nuovo_cent]
+      let mesi: string[] = []
+      if (adeguaCanoniRegistrati(movimenti, salvata, tutte, vecchi, campiModifica(nome)).mesi.length) {
+        await aggiorna<Movimento>(token, 'movimenti', (r) => {
+          const esito = adeguaCanoniRegistrati(r, salvata, tutte, vecchi, campiModifica(nome))
+          mesi = esito.mesi
+          return esito.record
+        }, `${nome}: canoni già registrati adeguati all'ISTAT ${salvata.anno} di ${descrizione}`)
+      }
+      setAdeguati(mesi.length ? { anno: salvata.anno, mesi, importo: salvata.canone_mensile_nuovo_cent } : null)
+    }
     if (v.aggiorna_canone === 'si' && v.canone_mensile_nuovo_cent != null && v.canone_mensile_nuovo_cent !== contratto.canone_mensile_cent) {
       await aggiorna<Contratto>(token, 'contratti', (r) => r.map((c) => (c.id === contratto.id
         ? { ...c, canone_mensile_cent: v.canone_mensile_nuovo_cent!, canone_annuale_cent: v.canone_mensile_nuovo_cent! * 12, imposta_registro_annuale_cent: cedolare ? c.imposta_registro_annuale_cent : v.quota_conduttore_cent ?? c.imposta_registro_annuale_cent, ...campiModifica(nome) }
@@ -179,6 +198,9 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
         </div>
       )}
       {!contratto.data_decorrenza && <div className="mt-3"><Avviso tipo="attenzione">Il contratto non ha la data di decorrenza: inseriscila nella scheda Dati e l'inizio di ogni annualità verrà compilato da solo.</Avviso></div>}
+      {adeguati && (
+        <div className="mt-3"><Avviso tipo="info">Aumento ISTAT {adeguati.anno}: {adeguati.mesi.length === 1 ? 'il mese già registrato' : `i ${adeguati.mesi.length} mesi già registrati`} ({adeguati.mesi.map((m) => `${m.slice(5)}/${m.slice(0, 4)}`).join(', ')}) {adeguati.mesi.length === 1 ? 'è passato' : 'sono passati'} al nuovo canone mensile di {formattaEuro(adeguati.importo)} (imponibile). Se erano già pagati con l'importo vecchio, in Canoni e incassi risultano "incassato in parte" (gialli) con la differenza da incassare.</Avviso></div>
+      )}
       <div className="mt-4">
         <Tabella<Annualita> righe={righe} onRiga={(r) => setAperta(r)} vuoto="Nessuna annualità registrata. Premi “Aggiungi annualità” per la prima." colonne={[
           { chiave: 'anno', etichetta: 'Anno', render: (a) => <span className="num font-titolo text-[17px] font-semibold">{a.anno}</span> },

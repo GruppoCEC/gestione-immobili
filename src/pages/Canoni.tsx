@@ -14,7 +14,7 @@ import Modulo, { type CampoDef } from '../components/Modulo'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, Gruppo, IntestazionePagina, Riquadro, Segmentato, Tabella, TavolaKpi, filtraTesto } from '../components/ui'
 import { useSessioneAttiva } from '../lib/sessione'
 import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
-import { canoneMensilePer, canoneScaduto, descriviCanone, scadenzaCanone, scaglioniAnno, totaliAnnoContratto } from '../lib/canone'
+import { canoneMensilePer, canoneScaduto, descriviCanone, scadenzaCanone, totaliAnnoContratto, ultimoAumento, type CanoneMese } from '../lib/canone'
 import { MODALITA_INCASSO, STATI_MOVIMENTO, TIPI_MOVIMENTO, etichettaDi, statoIva, type Annualita, type Conduttore, type Contratto, type Immobile, type Movimento, type Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaData, formattaEuro } from '../lib/utils/formato'
@@ -232,14 +232,16 @@ export default function PaginaCanoni() {
                               </td>
                               <td className="num">
                                 {(() => {
-                                  const sc = scaglioniAnno(c, annualita, anno)
-                                  const k = sc[sc.length - 1] ?? canoneMensilePer(c, annualita, mesiAnno[0])
-                                  const dettaglio = k.iva_percento ? `${formattaEuro(k.imponibile_cent)} + IVA ${k.iva_percento}%` : 'esente IVA'
+                                  // canone dell'ultimo mese mostrato (dicembre) e l'ultimo aumento ISTAT che lo ha portato a questo importo
+                                  const ultimoMese = mesiAnno[mesiAnno.length - 1]
+                                  const k = canoneMensilePer(c, annualita, ultimoMese)
+                                  const aum = ultimoAumento(c, annualita, ultimoMese)
+                                  const dettaglio = (x: CanoneMese) => x.iva_percento ? `${formattaEuro(x.imponibile_cent)} + IVA ${x.iva_percento}%` : 'esente IVA'
                                   return (
-                                    <div title={descriviCanone(k, formattaEuro)}>
+                                    <div title={descriviCanone(k, formattaEuro) + (aum ? ` · prima dell'aumento del ${aum.dal.slice(5)}/${aum.dal.slice(0, 4)}: ${descriviCanone(aum.precedente, formattaEuro)}` : '')}>
                                       <div className="font-medium">{formattaEuro(k.totale_cent)}</div>
-                                      <div className="text-xs text-neutro-700">{dettaglio}</div>
-                                      {sc.length > 1 && <div className="text-xs text-neutro-700">dal {k.dal ? `${k.dal.slice(5)}/${k.dal.slice(0, 4)}` : '—'} · in precedenza {sc.slice(0, -1).map((x) => formattaEuro(x.totale_cent)).join(', ')}</div>}
+                                      <div className="text-xs text-neutro-700">{dettaglio(k)}</div>
+                                      {aum && <div className="text-xs text-neutro-700">ISTAT dal {aum.dal.slice(5)}/{aum.dal.slice(0, 4)} · prima {formattaEuro(aum.precedente.totale_cent)}{aum.precedente.iva_percento ? ` (${formattaEuro(aum.precedente.imponibile_cent)} + IVA)` : ''}</div>}
                                     </div>
                                   )
                                 })()}

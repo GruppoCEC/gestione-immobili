@@ -3,7 +3,7 @@
  *
  * - `carica(nome)` legge e mette in cache l'elenco con il suo SHA.
  * - `aggiorna(nome, modifica, messaggio)` applica una modifica e la salva. Se nel frattempo
- *   un collega ha salvato, ricarica i dati aggiornati e riapplica la modifica (fino a 3 volte):
+ *   un collega ha salvato, ricarica i dati aggiornati e riapplica la modifica (fino a 6 volte, con brevi pause):
  *   così nessuno perde il lavoro dell'altro.
  * - Le cancellazioni sono sempre "soft": si imposta `eliminato_il`, il record resta nel file.
  */
@@ -97,9 +97,11 @@ export async function aggiorna<T extends RecordBase>(
   modifica: (record: T[]) => T[],
   messaggio: string,
 ): Promise<T[]> {
-  const TENTATIVI = 3
-  let ultimoErrore: unknown
+  const TENTATIVI = 6
   for (let i = 0; i < TENTATIVI; i++) {
+    // Dopo un conflitto si aspetta un attimo (sempre di più, con una parte casuale) prima di rileggere: GitHub ha il tempo
+    // di rendere disponibile il salvataggio del collega e due utenti che riprovano insieme non si scontrano di nuovo
+    if (i > 0) await new Promise((ok) => setTimeout(ok, 400 * i + Math.random() * 400))
     const attuale = (i === 0 && cache.has(nome)) ? (cache.get(nome)! as Cache<T>) : await leggiCollezione<T>(token, nome)
     const nuovo = modifica(attuale.record)
     const contenuto = JSON.stringify(nuovo, null, 2) + '\n'
@@ -109,7 +111,6 @@ export async function aggiorna<T extends RecordBase>(
       notifica()
       return nuovo
     } catch (e) {
-      ultimoErrore = e
       if (e instanceof ErroreGitHub && e.conflitto) {
         cache.delete(nome) // forza la rilettura al prossimo giro
         continue
@@ -117,7 +118,7 @@ export async function aggiorna<T extends RecordBase>(
       throw e
     }
   }
-  throw new Error(`Salvataggio non riuscito dopo ${TENTATIVI} tentativi: ${(ultimoErrore as Error)?.message ?? ''}`)
+  throw new Error('Salvataggio non riuscito: altri utenti stavano salvando nello stesso momento. Riprovare a salvare tra qualche secondo.')
 }
 
 /** Campi di tracciamento per un record nuovo. */
