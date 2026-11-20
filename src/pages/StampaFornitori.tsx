@@ -1,49 +1,29 @@
 /**
  * Stampe della sezione Fornitori (da salvare in PDF con "Stampa → Salva come PDF"):
  * - fatture dei fornitori di un ufficio o di tutti gli uffici di un responsabile (gruppo di supervisione);
- * - royalty Tecnocasa / Tecnomedia di un anno su una pagina orizzontale.
+ * - royalty Tecnocasa e Tecnomedia insieme: mensilità da pagare fino al mese corrente, per ufficio (A4 verticale).
  */
 import { useState, type ReactNode } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Printer } from 'lucide-react'
-import logo from '../assets/logo-gruppo.png'
-import { Bottone, Caricamento } from '../components/ui'
-import { ETICHETTE_STATO, FORNITORI_ROYALTY, mensilita, royaltyDaRegistrare, pagaRoyalty, scadenzaFattura, sommaImporti, statoSemplice, storicoTariffe, studioInFornitori } from '../lib/fornitori'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { Caricamento } from '../components/ui'
+import { ETICHETTE_STATO, FORNITORI_ROYALTY, fattureConRoyalty, mensilita, raggruppaPerStudio, pagaRoyalty, scadenzaFattura, sommaImporti, statoSemplice, storicoTariffe, studioInFornitori } from '../lib/fornitori'
 import { attivi } from '../lib/store'
 import { TIPOLOGIE_SPESA, etichettaDi, type Contribuente, type FatturaFornitore } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { formattaData, formattaDataOra, formattaEuro, oggiIso } from '../lib/utils/formato'
-
-// I colori delle caselle e delle etichette vanno stampati (di solito il browser toglie gli sfondi)
-const COLORI_STAMPA = { WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' } as React.CSSProperties
+import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { meseBreveAnnoCorto, meseDopo } from '../lib/utils/date'
+import { BarraStampa, COLORI_STAMPA, IntestazioneStampa, StileA4Verticale } from '../components/stampa'
 
 function Barra({ indietro, children }: { indietro: string; children?: ReactNode }) {
   return (
-    <div className="no-stampa sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-divisore bg-sfondo px-6 py-3">
-      <Link to={indietro} className="btn btn-ghost no-underline"><ArrowLeft size={16} /> Torna ai fornitori</Link>
-      <span className="ml-auto flex flex-wrap items-center gap-3 text-[13px]">{children}</span>
-      <Bottone onClick={() => window.print()}><Printer size={16} /> Stampa / salva PDF</Bottone>
-    </div>
+    <BarraStampa indietro={indietro} etichetta="Torna ai fornitori">
+      {children && <span className="ml-auto flex flex-wrap items-center gap-3 text-[13px]">{children}</span>}
+    </BarraStampa>
   )
 }
 
-function Intestazione({ kicker, titolo, sotto }: { kicker: string; titolo: string; sotto?: string }) {
-  return (
-    <header className="flex items-start justify-between gap-6 border-b-2 border-testo pb-3">
-      <div className="min-w-0">
-        <div className="kicker">{kicker}</div>
-        <h1 className="mt-1 text-[30px]">{titolo}</h1>
-        {sotto && <div className="mt-0.5 text-[13px] text-neutro-700">{sotto}</div>}
-      </div>
-      <div className="flex-none text-right text-xs text-neutro-700">
-        <img src={logo} alt="Gruppo CEC Bigoli" className="mb-1.5 ml-auto h-10 w-[160px] object-cover" />
-        Situazione al {formattaDataOra(new Date().toISOString())}
-      </div>
-    </header>
-  )
-}
-
-/* ---------------------------- fatture: ufficio o responsabile ---------------------------- */
+const Intestazione = ({ kicker, titolo, sotto }: { kicker: string; titolo: string; sotto?: string }) =>
+  <IntestazioneStampa kicker={kicker} titolo={titolo} sotto={sotto} sottoClasse="mt-0.5 text-[13px]" logoPiccolo />
 
 export function StampaFattureFornitori() {
   const { tipo, valore } = useParams()
@@ -57,10 +37,11 @@ export function StampaFattureFornitori() {
   const scelti = tipo === 'responsabile' ? studi.filter((s) => s.responsabile === chiave) : studi.filter((s) => s.id === chiave)
   if (caricamento && !scelti.length) return <div className="p-10"><Caricamento /></div>
 
-  const delle = (s: Contribuente) => [...fatture.filter((f) => f.contribuente_id === s.id), ...royaltyDaRegistrare(s, fatture, oggi)].filter((f) => anchePagate || !f.pagata)
+  const perStudio = raggruppaPerStudio(fatture)
+  const delle = (s: Contribuente) => fattureConRoyalty(s, perStudio, oggi).filter((f) => anchePagate || !f.pagata)
     .sort((a, b) => Number(a.pagata) - Number(b.pagata) || scadenzaFattura(a).localeCompare(scadenzaFattura(b)))
   const tot = (ff: FatturaFornitore[], st: 'da_pagare' | 'pagata') => sommaImporti(ff.filter((f) => statoSemplice(f) === st))
-  const tutte = scelti.flatMap((s) => [...fatture.filter((f) => f.contribuente_id === s.id), ...royaltyDaRegistrare(s, fatture, oggi)])
+  const tutte = scelti.flatMap((s) => fattureConRoyalty(s, perStudio, oggi))
   const titolo = tipo === 'responsabile' ? `Uffici di ${chiave}` : scelti[0]?.nome ?? 'Ufficio'
 
   return (
@@ -87,7 +68,7 @@ export function StampaFattureFornitori() {
           <table className="tabella-compatta mt-4 !text-[12.5px]">
             <thead><tr><th style={{ width: '1%' }}>Ufficio</th><th className="text-right">Da pagare</th><th className="text-right">Pagato</th></tr></thead>
             <tbody>
-              {scelti.map((s) => { const ff = [...fatture.filter((f) => f.contribuente_id === s.id), ...royaltyDaRegistrare(s, fatture, oggi)]; return (
+              {scelti.map((s) => { const ff = fattureConRoyalty(s, perStudio, oggi); return (
                 <tr key={s.id}><td className="whitespace-nowrap pr-6 font-medium">{s.nome}</td>
                   <td className="num text-right">{formattaEuro(tot(ff, 'da_pagare'))}</td><td className="num text-right">{formattaEuro(tot(ff, 'pagata'))}</td></tr>
               ) })}
@@ -138,8 +119,7 @@ export function StampaFattureFornitori() {
 
 /* ---------------------------- royalty: elenco per ufficio delle mensilità da pagare ---------------------------- */
 
-const MESI_BREVI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
-const meseBreve = (m: string) => `${MESI_BREVI[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`
+const meseBreve = meseBreveAnnoCorto
 
 /**
  * Per ogni ufficio le mensilità ancora da pagare (anche degli anni precedenti, dal primo importo impostato) fino
@@ -165,14 +145,14 @@ export function StampaRoyalty() {
 
   // fino al mese corrente (i mesi futuri non si stampano); per un anno passato fino a dicembre
   const fine = `${anno}-12` < meseCorrente ? `${anno}-12` : meseCorrente
-  const meseDopo = (m: string) => (m.slice(5) === '12' ? `${Number(m.slice(0, 4)) + 1}-01` : `${m.slice(0, 5)}${String(Number(m.slice(5)) + 1).padStart(2, '0')}`)
+  const perStudio = raggruppaPerStudio(fatture)
   const blocchi = studi.map((s) => {
     const righe = fornitori.filter((f) => pagaRoyalty(s, f)).flatMap((f) => {
       const primo = storicoTariffe(s, f)[0]?.dal
       const mesi: string[] = []
       // dal primo importo (o da gennaio dell'anno) fino al mese corrente
       for (let m = primo && primo < `${anno}-01` ? primo : `${anno}-01`; m <= fine; m = meseDopo(m)) mesi.push(m)
-      return mesi.map((x) => ({ fornitore: f, mese: x, ...mensilita(s, f, x, fatture, oggi) }))
+      return mesi.map((x) => ({ fornitore: f, mese: x, ...mensilita(s, f, x, perStudio.get(s.id) ?? [], oggi) }))
         .filter((r) => r.stato && r.stato !== 'pagata')
     }).sort((a, b) => a.mese.localeCompare(b.mese) || a.fornitore.localeCompare(b.fornitore))
     const impostato = fornitori.some((f) => pagaRoyalty(s, f) && storicoTariffe(s, f).length > 0)
@@ -190,7 +170,7 @@ export function StampaRoyalty() {
 
   return (
     <div className="min-h-screen bg-sfondo print:bg-white" style={COLORI_STAMPA}>
-      <style>{'@media print { @page { size: A4 portrait; margin: 10mm; } }'}</style>
+      <StileA4Verticale />
       <Barra indietro={`/fornitori?${new URLSearchParams({ scheda: 'royalty', anno: String(anno), ...(responsabile ? { responsabile } : {}), ...(ufficio ? { ufficio } : {}) }).toString()}`} />
       <div className="pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-7 text-sm md:px-10 print:my-0">
         <Intestazione kicker={`Royalty ${fornitori.join(' e ')}`} titolo={`Da pagare · ${anno}`}

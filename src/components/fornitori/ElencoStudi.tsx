@@ -5,17 +5,19 @@
  * Gli studi si aggiungono, rinominano e rimuovono da qui (rimuovere = togliere dalla sezione Fornitori;
  * lo studio resta nei tributi). La mensilità di competenza serve solo per le royalty.
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, Pencil, Plus, Printer, Trash2, X } from 'lucide-react'
 import { normalizzaNome, vuotoContribuente } from '../../lib/importaTributi'
 import { useSessioneAttiva } from '../../lib/sessione'
 import { aggiorna, campiModifica } from '../../lib/store'
 import { TIPOLOGIE_SPESA, etichettaDi, type Contribuente, type FatturaFornitore } from '../../lib/tipi'
-import { ETICHETTE_STATO, eCalcolata, nuovaFattura, royaltyDaRegistrare, scadenzaFattura, sommaImporti, statoSemplice, studioInFornitori } from '../../lib/fornitori'
-import { analizzaEuro, formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
+import { ETICHETTE_STATO, eCalcolata, fattureConRoyalty, nuovaFattura, raggruppaPerStudio, registraMensilita, scadenzaFattura, sommaImporti, statoSemplice, studioInFornitori } from '../../lib/fornitori'
+import { analizzaEuro, centesimiInTesto, formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
 import { SoloSeModifica, useSoloLettura } from '../SoloLettura'
 import { Avviso, BarraRicerca, Bottone, Etichetta, Segmentato } from '../ui'
+import FiltroUffici from '../FiltroUffici'
+import { responsabiliDi } from '../../lib/tributi'
 
 type FiltroStato = 'tutte' | 'da_pagare' | 'pagata'
 
@@ -25,7 +27,7 @@ function RigaModifica({ iniziale, fornitoriNoti, onSalva, onAnnulla, onElimina }
   onSalva: (f: FatturaFornitore) => Promise<string | null>; onAnnulla: () => void; onElimina?: () => void
 }) {
   const [f, setF] = useState(iniziale)
-  const [importo, setImporto] = useState(iniziale.importo_cent === null ? '' : (iniziale.importo_cent / 100).toFixed(2).replace('.', ','))
+  const [importo, setImporto] = useState(centesimiInTesto(iniziale.importo_cent))
   const [errore, setErrore] = useState<string | null>(null)
   const [inCorso, setInCorso] = useState(false)
   const imp = <K extends keyof FatturaFornitore>(k: K, v: FatturaFornitore[K]) => setF((x) => ({ ...x, [k]: v }))
@@ -36,8 +38,9 @@ function RigaModifica({ iniziale, fornitoriNoti, onSalva, onAnnulla, onElimina }
     <>
       <tr className="bg-accento-100">
         <td>
-          <input value={f.fornitore} list="fornitori-noti" placeholder="Fornitore" autoFocus onChange={(e) => imp('fornitore', e.target.value)} className="input" />
-          <datalist id="fornitori-noti">{fornitoriNoti.map((n) => <option key={n} value={n} />)}</datalist>
+          <input value={f.fornitore} list={`fornitori-noti-${f.id}`} placeholder="Fornitore" autoFocus onChange={(e) => imp('fornitore', e.target.value)} className="input" />
+          {/* id diverso per ogni riga: possono essere aperte insieme una riga in modifica e una nuova */}
+          <datalist id={`fornitori-noti-${f.id}`}>{fornitoriNoti.map((n) => <option key={n} value={n} />)}</datalist>
         </td>
         <td>
           <select value={f.tipologia} onChange={(e) => imp('tipologia', e.target.value)} className="input">
@@ -78,10 +81,10 @@ export default function ElencoStudi({ studi, fatture }: { studi: Contribuente[];
   const [rinomina, setRinomina] = useState<{ id: string; nome: string } | null>(null)
   const [nuovoStudio, setNuovoStudio] = useState<{ nome: string; responsabile: string } | null>(null)
   const [errore, setErrore] = useState<string | null>(null)
+  const perStudio = useMemo(() => raggruppaPerStudio(fatture), [fatture])
 
   const attivi = studi.filter(studioInFornitori)
   const rimossi = studi.filter((s) => !studioInFornitori(s))
-  const responsabili = [...new Set(attivi.map((s) => s.responsabile).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'it'))
   const fornitoriNoti = [...new Set(['Tecnocasa', 'Tecnomedia', ...fatture.map((f) => f.fornitore)])].sort((a, b) => a.localeCompare(b, 'it'))
   const q = ricerca.trim().toLowerCase()
   const filtra = (ff: FatturaFornitore[]) => ff
@@ -92,7 +95,13 @@ export default function ElencoStudi({ studi, fatture }: { studi: Contribuente[];
       || scadenzaFattura(a).localeCompare(scadenzaFattura(b)))
   const visibili = attivi.filter((s) => (!responsabile || s.responsabile === responsabile) && (!ufficio || s.id === ufficio))
   // Fatture dello studio + mensilità di royalty non ancora registrate (calcolate dall'importo mensile)
-  const delloStudio = (s: Contribuente) => [...fatture.filter((f) => f.contribuente_id === s.id), ...royaltyDaRegistrare(s, fatture, oggi)]
+  // (calcolate una volta per studio a ogni aggiornamento dello schermo)
+  const calcolate = new Map<string, FatturaFornitore[]>()
+  const delloStudio = (s: Contribuente) => {
+    let ff = calcolate.get(s.id)
+    if (!ff) { ff = fattureConRoyalty(s, perStudio, oggi); calcolate.set(s.id, ff) }
+    return ff
+  }
   const blocchi = visibili.map((s) => { const tutte = delloStudio(s); return { s, tutte, mostrate: filtra(tutte) } })
     .filter((b) => !(soloConFatture || q || tipologia || filtroStato !== 'tutte') || b.mostrate.length > 0 || nuovaPer?.studio === b.s.id)
   const tutteVisibili = visibili.flatMap(delloStudio)
@@ -115,8 +124,8 @@ export default function ElencoStudi({ studi, fatture }: { studi: Contribuente[];
     setErrore(null)
     if (eCalcolata(f)) {
       // Mensilità di royalty calcolata: spuntandola diventa una registrazione vera (con l'importo di quel mese)
-      const nuova = { ...nuovaFattura(nome, {}), ...f, ...campi }
-      const vera = { ...nuova, id: nuovaFattura(nome).id, creato_il: new Date().toISOString(), creato_da: nome, ...campiModifica(nome) }
+      // stessi dati della riga calcolata (importo di quel mese) più quelli appena scelti, con un id vero
+      const vera = registraMensilita(nome, f, undefined, { importo_cent: f.importo_cent, numero: f.numero, data_fattura: f.data_fattura, note: f.note, ...campi })
       try {
         await aggiorna<FatturaFornitore>(token, 'fatture_fornitori', (r) => [...r, vera], `${nome}: royalty ${f.fornitore} ${f.competenza} pagata — ${studi.find((s) => s.id === f.contribuente_id)?.nome ?? ''}`)
       } catch (e) { setErrore((e as Error).message) }
@@ -161,14 +170,7 @@ export default function ElencoStudi({ studi, fatture }: { studi: Contribuente[];
     <div className="text-sm">
       {/* Barra dei filtri */}
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <select value={responsabile} onChange={(e) => { setResponsabile(e.target.value); setUfficio('') }} className="input w-auto">
-          <option value="">Tutti i responsabili</option>
-          {responsabili.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select value={ufficio} onChange={(e) => setUfficio(e.target.value)} className="input w-auto">
-          <option value="">Tutti gli uffici</option>
-          {attivi.filter((s) => !responsabile || s.responsabile === responsabile).map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
-        </select>
+        <FiltroUffici uffici={attivi} responsabile={responsabile} ufficio={ufficio} onResponsabile={setResponsabile} onUfficio={setUfficio} />
         <select value={tipologia} onChange={(e) => setTipologia(e.target.value)} className="input w-auto">
           <option value="">Tutte le tipologie</option>
           {TIPOLOGIE_SPESA.map((t) => <option key={t.valore} value={t.valore}>{t.etichetta}</option>)}
@@ -201,7 +203,7 @@ export default function ElencoStudi({ studi, fatture }: { studi: Contribuente[];
           <b className="text-[13px]">Nuovo studio</b>
           <input value={nuovoStudio.nome} autoFocus placeholder="Nome dello studio" onChange={(e) => setNuovoStudio({ ...nuovoStudio, nome: e.target.value })} className="input w-[220px] !min-h-[30px] !py-1" />
           <input value={nuovoStudio.responsabile} placeholder="Responsabile" list="responsabili" onChange={(e) => setNuovoStudio({ ...nuovoStudio, responsabile: e.target.value })} className="input w-[160px] !min-h-[30px] !py-1" />
-          <datalist id="responsabili">{responsabili.map((r) => <option key={r} value={r} />)}</datalist>
+          <datalist id="responsabili">{responsabiliDi(attivi).map((r) => <option key={r} value={r} />)}</datalist>
           <Bottone piccolo onClick={aggiungiStudio}><Check size={14} /> Aggiungi</Bottone>
           <button type="button" className="btn btn-ghost btn-piccolo" onClick={() => setNuovoStudio(null)}><X size={14} /></button>
           <span className="text-[12px] text-neutro-700">Lo studio compare anche nell'elenco Società dei tributi.</span>

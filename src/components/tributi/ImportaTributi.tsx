@@ -48,10 +48,10 @@ export default function ImportaTributi() {
     fetch(LOCALE_RATEIZZI, { method: 'HEAD' }).then((r) => setLocali(r.ok)).catch(() => setLocali(false))
   }, [])
 
-  function analizza(f: FileTributi) {
+  async function analizza(f: FileTributi) {
     setErrore(null); setEsito(null)
     try {
-      setPiano(preparaImportazioneTributi(f, {
+      setPiano(await preparaImportazioneTributi(f, {
         contribuenti: attivi(dati<Contribuente>('contribuenti')), pratiche: attivi(dati<PraticaTributo>('pratiche_tributi')),
       }, nome))
     } catch (e) { setPiano(null); setErrore('Impossibile leggere il file: ' + (e as Error).message) }
@@ -60,7 +60,7 @@ export default function ImportaTributi() {
   async function scegli(chiave: Chiave, f: File | undefined) {
     if (!f) return
     const nuovo = { ...file, [chiave]: await f.arrayBuffer() }
-    setFile(nuovo); setNomi((n) => ({ ...n, [chiave]: f.name })); analizza(nuovo)
+    setFile(nuovo); setNomi((n) => ({ ...n, [chiave]: f.name })); await analizza(nuovo)
   }
 
   /** Legge tutti i PDF di piano della cartella scelta (gli altri PDF, es. gli avvisi, vengono ignorati). */
@@ -77,7 +77,7 @@ export default function ImportaTributi() {
     setLettura(null)
     setCartella({ nome: (pdf[0]?.webkitRelativePath || '').split('/')[0] || 'cartella', letti: letti.length, altri })
     const nuovo = { ...file, pdf: letti }
-    setFile(nuovo); analizza(nuovo)
+    setFile(nuovo); await analizza(nuovo)
   }
 
   async function daCartella() {
@@ -85,7 +85,7 @@ export default function ImportaTributi() {
     const [a, b] = await Promise.all([fetch(LOCALE_SOSPESO), fetch(LOCALE_RATEIZZI)])
     if (!a.ok || !b.ok) { setErrore('File non trovati nella cartella dati-excel/tributi del progetto.'); return }
     const nuovo = { ...file, sospeso: await a.arrayBuffer(), rateizzi: await b.arrayBuffer() }
-    setFile(nuovo); setNomi({ sospeso: LOCALE_SOSPESO.split('/').pop()!, rateizzi: LOCALE_RATEIZZI.split('/').pop()! }); analizza(nuovo)
+    setFile(nuovo); setNomi({ sospeso: LOCALE_SOSPESO.split('/').pop()!, rateizzi: LOCALE_RATEIZZI.split('/').pop()! }); await analizza(nuovo)
   }
 
   async function importa() {

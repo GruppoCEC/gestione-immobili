@@ -1,5 +1,6 @@
 /** Backup completo in JSON (tutte le collezioni, inclusi i record eliminati) e ripristino. */
 import { aggiorna, carica, type NomeCollezione, type RecordBase } from './store'
+import { oggiIso } from './utils/formato'
 
 export const COLLEZIONI: NomeCollezione[] = ['societa', 'immobili', 'conduttori', 'condomini', 'contratti', 'annualita', 'movimenti', 'voci_condominiali', 'piani_rientro', 'allegati', 'comunicazioni', 'tassi_legali', 'contribuenti', 'pratiche_tributi', 'fatture_fornitori']
 
@@ -10,7 +11,7 @@ export async function creaBackup(token: string, nome: string): Promise<void> {
   for (const n of COLLEZIONI) collezioni[n] = await carica<RecordBase>(token, n, true)
   const b: Backup = { versione: 1, creato_il: new Date().toISOString(), creato_da: nome, collezioni }
   const blob = new Blob([JSON.stringify(b, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `backup-gestione-immobili-${new Date().toISOString().slice(0, 10)}.json`; a.click()
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `backup-gestione-immobili-${oggiIso()}.json`; a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
 }
 

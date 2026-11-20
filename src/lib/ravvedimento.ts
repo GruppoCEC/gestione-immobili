@@ -13,6 +13,7 @@
  * - Interessi al tasso legale, giorno per giorno, dal giorno successivo alla scadenza al giorno del pagamento.
  * NON riguarda la tardiva PRIMA registrazione del contratto, che ha sanzioni diverse.
  */
+import { aggiungiGiorni, giorniTra } from './utils/date'
 
 /** Tassi legali annui (%) già noti. Quelli salvati nell'app (Documenti → Calcolo ravvedimento) li sostituiscono o li integrano. */
 export const TASSI_LEGALI_INIZIALI: Record<number, number> = {
@@ -31,11 +32,9 @@ export const CODICE_IMPOSTA_PROROGA = '1504'
 export const CODICE_SANZIONE = '1509'
 export const CODICE_INTERESSI = '1510'
 
-const GIORNO_MS = 86_400_000
 const inData = (iso: string) => new Date(iso + 'T00:00:00Z')
-const iso = (d: Date) => d.toISOString().slice(0, 10)
-export const aggiungiGiorni = (data: string, n: number) => iso(new Date(inData(data).getTime() + n * GIORNO_MS))
-export const giorniTra = (da: string, a: string) => Math.round((inData(a).getTime() - inData(da).getTime()) / GIORNO_MS)
+// aggiungiGiorni e giorniTra stanno in utils/date.ts; esportati anche da qui per chi li importava da questo file
+export { aggiungiGiorni, giorniTra }
 
 /** Domenica di Pasqua (algoritmo di Gauss/Meeus) per calcolare il Lunedì dell'Angelo. */
 function pasqua(anno: number): string {

@@ -1,15 +1,16 @@
 /** Esportazione in Excel (.xlsx) degli elenchi, con intestazioni in italiano e importi in euro. */
-import * as XLSX from 'xlsx'
+// La libreria Excel (circa 400 KB) si scarica solo al primo export, non all'apertura del sito
 import type { CampoDef } from '../components/Modulo'
 import type { Opzione } from './tipi'
-import { formattaData } from './utils/formato'
+import { formattaData, oggiIso } from './utils/formato'
 
 export interface Foglio { nome: string; righe: Record<string, unknown>[] }
 
 function nomeFoglioSicuro(n: string): string { return n.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) }
 
 /** Scarica un file Excel con uno o più fogli. */
-export function scaricaExcel(nomeFile: string, fogli: Foglio[]): void {
+export async function scaricaExcel(nomeFile: string, fogli: Foglio[]): Promise<void> {
+  const XLSX = await import('xlsx')
   const wb = XLSX.utils.book_new()
   for (const f of fogli) {
     const ws = XLSX.utils.json_to_sheet(f.righe.length ? f.righe : [{ '(nessun dato)': '' }])
@@ -18,7 +19,7 @@ export function scaricaExcel(nomeFile: string, fogli: Foglio[]): void {
     ws['!cols'] = chiavi.map((k) => ({ wch: Math.min(60, Math.max(k.length, ...f.righe.map((r) => String(r[k] ?? '').length)) + 2) }))
     XLSX.utils.book_append_sheet(wb, ws, nomeFoglioSicuro(f.nome))
   }
-  const data = new Date().toISOString().slice(0, 10)
+  const data = oggiIso()
   XLSX.writeFile(wb, `${nomeFile}_${data}.xlsx`)
 }
 

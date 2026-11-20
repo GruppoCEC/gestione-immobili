@@ -35,9 +35,9 @@ export default function ImportaAnagrafica() {
     fetch(LOCALE, { method: 'HEAD' }).then((r) => setLocale(r.ok)).catch(() => setLocale(false))
   }, [])
 
-  function analizza(buffer: ArrayBuffer, nomeF: string) {
+  async function analizza(buffer: ArrayBuffer, nomeF: string) {
     setErrore(null); setEsito(null); setNomeFile(nomeF)
-    try { setPiano(preparaAnagrafica(buffer, attivi(dati<Contribuente>('contribuenti')), nome)) }
+    try { setPiano(await preparaAnagrafica(buffer, attivi(dati<Contribuente>('contribuenti')), nome)) }
     catch (e) { setPiano(null); setErrore('Impossibile leggere il file: ' + (e as Error).message) }
   }
 
@@ -67,11 +67,11 @@ export default function ImportaAnagrafica() {
           <div className="font-medium">File "Tributi in Sospeso" (solo il foglio Anagrafica)</div>
           <div className="text-[13px] text-neutro-700">{nomeFile ? <>Scelto: <b>{nomeFile}</b></> : 'Si leggono solo le colonne Società, Responsabile, Email ed Email CC. Gli altri fogli (In Sospeso, Definiti) vengono ignorati.'}</div>
         </div>
-        {locale && MODO_DEMO && <Bottone variante="ghost" disabled={disabilitato} onClick={async () => { const r = await fetch(LOCALE); if (r.ok) analizza(await r.arrayBuffer(), LOCALE.split('/').pop()!) }}>Dalla cartella del progetto</Bottone>}
+        {locale && MODO_DEMO && <Bottone variante="ghost" disabled={disabilitato} onClick={async () => { const r = await fetch(LOCALE); if (r.ok) await analizza(await r.arrayBuffer(), LOCALE.split('/').pop()!) }}>Dalla cartella del progetto</Bottone>}
         <label className={`btn btn-secondario ${disabilitato ? 'pointer-events-none opacity-45' : ''}`}>
           <Upload size={16} /> Scegli file…
           <input type="file" accept=".xlsx,.xls" className="hidden" disabled={disabilitato}
-            onChange={async (e) => { const f = e.target.files?.[0]; if (f) analizza(await f.arrayBuffer(), f.name); e.target.value = '' }} />
+            onChange={async (e) => { const f = e.target.files?.[0]; if (f) await analizza(await f.arrayBuffer(), f.name); e.target.value = '' }} />
         </label>
       </div>
 

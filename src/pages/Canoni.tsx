@@ -14,12 +14,12 @@ import Modulo, { type CampoDef } from '../components/Modulo'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, Gruppo, IntestazionePagina, Riquadro, Segmentato, Tabella, TavolaKpi, filtraTesto } from '../components/ui'
 import { useSessioneAttiva } from '../lib/sessione'
 import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
-import { canoneMensilePer, canoneScaduto, descriviCanone, scadenzaCanone, totaliAnnoContratto, ultimoAumento, type CanoneMese } from '../lib/canone'
+import { canoneMensilePer, canoneScaduto, descriviCanone, inGrigliaAnno, scadenzaCanone, totaliAnnoContratto, ultimoAumento, type CanoneMese } from '../lib/canone'
 import { MODALITA_INCASSO, STATI_MOVIMENTO, TIPI_MOVIMENTO, etichettaDi, statoIva, type Annualita, type Conduttore, type Contratto, type Immobile, type Movimento, type Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { formattaData, formattaEuro } from '../lib/utils/formato'
+import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { MESI_BREVI as MESI, mesiDellAnno } from '../lib/utils/date'
 
-const MESI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
 const r0 = (n: number) => Math.round(n)
 /** Importo compatto per le celle: "1.220" oppure "1.220,50" */
 const MIGLIAIA = { useGrouping: 'always' } as Intl.NumberFormatOptions
@@ -79,12 +79,13 @@ export default function PaginaCanoni() {
     return { ...base, ...calcolaIva(base) }
   }
   function nuovoGenerico(): Partial<Movimento> {
-    return { contratto_id: '', tipo: 'rimborso_condominio', competenza: new Date().toISOString().slice(0, 10), descrizione: '', imponibile_cent: null, iva_percento: 0, iva_cent: null, dovuto_cent: null, incassato_cent: null, data_incasso: '', modalita: 'bonifico', numero_fattura: '', data_fattura: '', stato: 'da_incassare', note: '' }
+    return { contratto_id: '', tipo: 'rimborso_condominio', competenza: oggiIso(), descrizione: '', imponibile_cent: null, iva_percento: 0, iva_cent: null, dovuto_cent: null, incassato_cent: null, data_incasso: '', modalita: 'bonifico', numero_fattura: '', data_fattura: '', stato: 'da_incassare', note: '' }
   }
 
   const campi: CampoDef<Movimento>[] = [
     { nome: 'contratto_id', etichetta: 'Contratto', tipo: 'select', obbligatorio: true, intera: true,
-      opzioni: contratti.filter((c) => c.stato !== 'cessato').map((c) => { const d = descrivi(c); return { valore: c.id, etichetta: `${d.immobile} — ${d.conduttore} (${d.societa})` } }) },
+      // Contratti attivi, cessati nell'anno mostrato e quello del movimento aperto (così non resta "— seleziona —")
+      opzioni: contratti.filter((c) => inGrigliaAnno(c, anno) || c.id === aperto?.contratto_id).map((c) => { const d = descrivi(c); return { valore: c.id, etichetta: `${d.immobile} — ${d.conduttore} (${d.societa})${c.stato === 'cessato' ? ' · cessato' : ''}` } }) },
     { nome: 'tipo', etichetta: 'Tipo', tipo: 'select', opzioni: TIPI_MOVIMENTO, obbligatorio: true },
     { nome: 'competenza', etichetta: 'Competenza (mese AAAA-MM o data)', tipo: 'testo', obbligatorio: true },
     { nome: 'descrizione', etichetta: 'Descrizione', tipo: 'testo', intera: true },
@@ -123,12 +124,13 @@ export default function PaginaCanoni() {
   }
 
   // ---- Griglia mensile ----
-  const nascosti = contratti.filter((c) => c.stato !== 'cessato' && c.gestione_incassi === 'no').length
-  const attiviC = filtraTesto(contratti.filter((c) => c.stato !== 'cessato' && (mostraNascosti || c.gestione_incassi !== 'no')).map((c) => ({ ...c, ...descrivi(c) })), ricerca)
+  // In griglia anche i contratti cessati nell'anno: i loro ultimi canoni non incassati restano visibili e nei totali
+  const nascosti = contratti.filter((c) => inGrigliaAnno(c, anno) && c.gestione_incassi === 'no').length
+  const attiviC = filtraTesto(contratti.filter((c) => inGrigliaAnno(c, anno) && (mostraNascosti || c.gestione_incassi !== 'no')).map((c) => ({ ...c, ...descrivi(c) })), ricerca)
   const gruppi = new Map<string, typeof attiviC>()
   for (const c of attiviC) gruppi.set(c.societa, [...(gruppi.get(c.societa) ?? []), c])
-  const mesiAnno = MESI.map((_, i) => `${anno}-${String(i + 1).padStart(2, '0')}`)
-  const oggi = new Date().toISOString().slice(0, 10)
+  const mesiAnno = mesiDellAnno(anno)
+  const oggi = oggiIso()
   const oggiMese = oggi.slice(0, 7)
   const cella = (c: Contratto, mese: string): Cella => ({ contratto: c, mese, movimento: movimenti.find((m) => m.contratto_id === c.id && m.tipo === 'canone' && m.competenza === mese) ?? null })
   const inizioContratto = (c: Contratto) => c.data_decorrenza ? c.data_decorrenza.slice(0, 7) : ''
@@ -228,7 +230,8 @@ export default function PaginaCanoni() {
                                   <SoloSeModifica><button title={c.gestione_incassi === 'no' ? 'Mostra di nuovo negli incassi' : 'Nascondi dagli incassi (non gestito da noi)'} onClick={() => impostaGestione(c, c.gestione_incassi === 'no' ? 'si' : 'no')} className="p-0.5 text-neutro-500 hover:bg-[rgba(29,31,32,0.04)] hover:text-testo">{c.gestione_incassi === 'no' ? <Eye size={14} /> : <EyeOff size={14} />}</button></SoloSeModifica>
                                 </div>
                                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-neutro-700">{c.conduttore} <Etichetta tono={statoIva(c).tono}>{statoIva(c).testo}</Etichetta>
-                                  {c.gestione_incassi === 'no' && <Etichetta tono="grigio">non gestito da noi</Etichetta>}</div>
+                                  {c.gestione_incassi === 'no' && <Etichetta tono="grigio">non gestito da noi</Etichetta>}
+                                  {c.stato === 'cessato' && <Etichetta tono="grigio">cessato il {formattaData(c.data_cessazione)}</Etichetta>}</div>
                               </td>
                               <td className="num">
                                 {(() => {

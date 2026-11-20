@@ -86,7 +86,7 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
     const ultima = righe[righe.length - 1]
     const anno = ultima ? ultima.anno + 1 : (contratto.data_decorrenza ? Number(contratto.data_decorrenza.slice(0, 4)) + 1 : new Date().getFullYear())
     const mensile = ultima?.canone_mensile_nuovo_cent ?? contratto.canone_mensile_cent ?? (contratto.canone_annuale_cent != null ? r0(contratto.canone_annuale_cent / 12) : null)
-    const regole = regoleImposta(contratto)
+    const regole = regoleImposta(contratto, locatore)
     const base: Partial<Annualita> = {
       contratto_id: contratto.id, anno, data_inizio: inizioAnnualita(contratto, anno),
       istat_applicato: contratto.istat_attivo === 'no' ? 'no' : 'si', istat_indice_percento: null, istat_quota_percento: contratto.istat_percentuale ?? 75,
@@ -115,7 +115,7 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
     { nome: 'canone_mensile_nuovo_cent', etichetta: 'Canone MENSILE dopo l’ISTAT', tipo: 'euro', aiuto: 'Calcolato, modificabile' },
     { nome: 'aumento_mensile_cent', etichetta: 'Aumento mensile', tipo: 'euro' },
     { nome: 'canone_nuovo_cent', etichetta: 'Canone ANNUO dopo l’ISTAT', tipo: 'euro', soloLettura: true, aiuto: 'Mensile × 12' },
-    { nome: 'aggiorna_canone', etichetta: 'Aggiorna il canone nella scheda contratto', tipo: 'select', opzioni: SI_NO, intera: true },
+    { nome: 'aggiorna_canone', etichetta: 'Aggiorna il canone nella scheda contratto', tipo: 'select', opzioni: SI_NO, intera: true, aiuto: 'Vale solo per l’annualità più recente: modificando un’annualità passata il canone attuale del contratto non cambia' },
     { nome: 'imposta_percento', etichetta: 'Aliquota (%)', tipo: 'percentuale', sezione: 'Imposta di registro', aiuto: '2% abitativi · 1% uso diverso con locatore IVA' },
     { nome: 'proroga', etichetta: 'Prima annualità di una proroga?', tipo: 'select', opzioni: SI_NO, aiuto: 'Sì = si paga con codice tributo 1504 (proroga) invece di 1501' },
     { nome: 'base_imponibile_percento', etichetta: 'Base imponibile (% del canone)', tipo: 'numero', aiuto: '100, oppure 70 per canone concordato' },
@@ -155,7 +155,10 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
       }
       setAdeguati(mesi.length ? { anno: salvata.anno, mesi, importo: salvata.canone_mensile_nuovo_cent } : null)
     }
-    if (v.aggiorna_canone === 'si' && v.canone_mensile_nuovo_cent != null && v.canone_mensile_nuovo_cent !== contratto.canone_mensile_cent) {
+    // Il canone della scheda contratto segue solo l'annualità più recente: correggendo un'annualità vecchia
+    // (es. per segnare l'imposta pagata) il canone attuale non deve tornare al valore di quell'anno
+    const piuRecente = !attivi(tutte).some((x) => x.contratto_id === contratto.id && x.id !== salvata?.id && x.anno > (salvata?.anno ?? v.anno ?? 0))
+    if (piuRecente && v.aggiorna_canone === 'si' && v.canone_mensile_nuovo_cent != null && v.canone_mensile_nuovo_cent !== contratto.canone_mensile_cent) {
       await aggiorna<Contratto>(token, 'contratti', (r) => r.map((c) => (c.id === contratto.id
         ? { ...c, canone_mensile_cent: v.canone_mensile_nuovo_cent!, canone_annuale_cent: v.canone_mensile_nuovo_cent! * 12, imposta_registro_annuale_cent: cedolare ? c.imposta_registro_annuale_cent : v.quota_conduttore_cent ?? c.imposta_registro_annuale_cent, ...campiModifica(nome) }
         : c)), `${nome}: aggiorna canone ${descrizione} (ISTAT ${v.anno})`)

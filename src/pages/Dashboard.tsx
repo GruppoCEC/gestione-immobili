@@ -10,7 +10,10 @@ import { puoVedere } from '../lib/permessi'
 import { attivi } from '../lib/store'
 import { impostaDaPagare, inCedolare, rimborsoDaIncassare, type Annualita, type Contratto, type Immobile, type Societa, type VoceCondominiale } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { formattaData, formattaEuro } from '../lib/utils/formato'
+import { canoneMensilePer } from '../lib/canone'
+import { prossimaScadenza } from '../lib/proroghe'
+import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { MESI_BREVI, aggiungiGiorni, giorniTra, meseDopo } from '../lib/utils/date'
 
 interface RigaSocieta {
   id: string
@@ -26,8 +29,6 @@ interface RigaSocieta {
 interface Evento { tipo: 'scadenza' | 'registro'; testo: string; titolo: string }
 interface DaFare { id: string; titolo: string; dettaglio: string; tag: string; tono: TonoEtichetta }
 
-const GIORNO = 86_400_000
-const MESI_BREVI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
 /** Giorni concessi per pagare l'imposta di registro dall'inizio dell'annualità */
 const GIORNI_PAGAMENTO_REGISTRO = 30
 /** Finestra per i bollettini condominiali "in scadenza" e soglia per segnarli come urgenti */
@@ -36,9 +37,7 @@ const GIORNI_URGENTE = 7
 /** Voci singole di imposta di registro mostrate prima di raggrupparle */
 const MAX_VOCI_REGISTRO = 4
 
-const iso = (d: Date) => d.toISOString().slice(0, 10)
-const piuGiorni = (isoData: string, giorni: number) => iso(new Date(new Date(isoData + 'T00:00:00Z').getTime() + giorni * GIORNO))
-const giorniTra = (da: string, a: string) => Math.round((new Date(a + 'T00:00:00Z').getTime() - new Date(da + 'T00:00:00Z').getTime()) / GIORNO)
+const piuGiorni = aggiungiGiorni
 /** Importo senza decimali, per i numeri grandi: 26916000 → "269.160 €" */
 const euroTondo = (cent: number) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0, useGrouping: 'always' } as Intl.NumberFormatOptions).format(cent / 100)
 /** Indirizzo accorciato per le caselle del calendario */
@@ -48,7 +47,7 @@ export default function Dashboard() {
   const { nome } = useSessioneAttiva()
   const utente = useUtente()
   const { dati, caricamento, errore } = useCollezioni(['societa', 'immobili', 'contratti', 'annualita', 'voci_condominiali'])
-  const [oggi] = useState(() => iso(new Date()))
+  const [oggi] = useState(oggiIso)
   const tra30 = piuGiorni(oggi, 30)
 
   const societa = attivi(dati<Societa>('societa'))
@@ -61,6 +60,10 @@ export default function Dashboard() {
   const indirizzo = (immobileId: string) => immobili.find((i) => i.id === immobileId)?.indirizzo ?? '—'
   const vedeRegistro = puoVedere(utente, 'registro')
   const vedeCondominio = puoVedere(utente, 'condominio')
+  // Canone mensile (imponibile) in vigore oggi, compresi gli aumenti ISTAT registrati nel registro annuale
+  const canoneOggi = (c: Contratto) => canoneMensilePer(c, annualita, oggi.slice(0, 7)).imponibile_cent ?? 0
+  // Scadenza del periodo in corso (dopo i rinnovi), non solo la prima scadenza
+  const scadenzaDi = (c: Contratto) => prossimaScadenza(c, oggi)
 
   // ── Riepilogo per società ──
   const righe: RigaSocieta[] = societa.map((s) => {
@@ -69,7 +72,7 @@ export default function Dashboard() {
     const con = attiviC.filter((c) => ids.has(c.immobile_id))
     return {
       id: s.id, societa: s.ragione_sociale, immobili: imm.length, liberi: imm.filter((i) => i.stato === 'libero').length, contratti: con.length,
-      canone_mensile: somma(con.map((c) => c.canone_mensile_cent)), canone_annuo: somma(con.map((c) => c.canone_annuale_cent)),
+      canone_mensile: somma(con.map(canoneOggi)), canone_annuo: somma(con.map((c) => canoneOggi(c) * 12)),
       registro: somma(con.filter((c) => !inCedolare(c)).map((c) => c.imposta_registro_annuale_cent)),
     }
   }).sort((a, b) => b.canone_annuo - a.canone_annuo)
@@ -80,7 +83,7 @@ export default function Dashboard() {
   }), { id: 'tot', societa: 'Totale gruppo', immobili: 0, liberi: 0, contratti: 0, canone_mensile: 0, canone_annuo: 0, registro: 0 })
   const maxAnnuo = Math.max(1, ...righe.map((r) => r.canone_annuo))
 
-  const scadenze = attiviC.filter((c) => c.prima_scadenza && c.prima_scadenza >= oggi && c.prima_scadenza <= tra30)
+  const scadenze = attiviC.filter((c) => { const s = scadenzaDi(c); return s && s >= oggi && s <= tra30 })
   const senzaDate = attiviC.filter((c) => !c.data_decorrenza || !c.prima_scadenza).length
   const inDisdetta = attiviC.filter((c) => c.stato === 'in_disdetta').length
 
@@ -92,18 +95,18 @@ export default function Dashboard() {
   ]
 
   // ── Calendario dei prossimi 12 mesi ──
-  const inizio = new Date(oggi + 'T00:00:00Z')
   const mesi = Array.from({ length: 12 }, (_, k) => {
-    const d = new Date(Date.UTC(inizio.getUTCFullYear(), inizio.getUTCMonth() + k, 1))
-    return { chiave: iso(d).slice(0, 7), mese: MESI_BREVI[d.getUTCMonth()], anno: d.getUTCFullYear(), eventi: [] as Evento[] }
+    const chiave = meseDopo(oggi, k)
+    return { chiave, mese: MESI_BREVI[Number(chiave.slice(5, 7)) - 1], anno: Number(chiave.slice(0, 4)), eventi: [] as Evento[] }
   })
   const primo = mesi[0].chiave
   const ultimo = mesi[11].chiave
   const aggiungi = (data: string, ev: Evento) => mesi.find((m) => m.chiave === data.slice(0, 7))?.eventi.push(ev)
   for (const c of attiviC) {
     const ind = indirizzo(c.immobile_id)
-    if (c.prima_scadenza && c.prima_scadenza.slice(0, 7) >= primo && c.prima_scadenza.slice(0, 7) <= ultimo) {
-      aggiungi(c.prima_scadenza, { tipo: 'scadenza', testo: breve(ind), titolo: `Scadenza contratto ${formattaData(c.prima_scadenza)} · ${ind}` })
+    const scad = scadenzaDi(c)
+    if (scad && scad.slice(0, 7) >= primo && scad.slice(0, 7) <= ultimo) {
+      aggiungi(scad, { tipo: 'scadenza', testo: breve(ind), titolo: `Scadenza contratto ${formattaData(scad)} · ${ind}` })
     }
     if (vedeRegistro && c.data_decorrenza && !inCedolare(c)) {
       // Anniversari della decorrenza (inizio di ogni annualità) che cadono nei prossimi 12 mesi
@@ -120,7 +123,8 @@ export default function Dashboard() {
   // ── Da fare ──
   const daFare: DaFare[] = []
   if (vedeRegistro) {
-    const nonPagate = annualita.filter((a) => impostaDaPagare(a, contratti.find((c) => c.id === a.contratto_id)) && (a.imposta_cent ?? 0) > 0 && a.data_inizio && a.data_inizio <= tra30)
+    // Solo annualità di contratti esistenti (quelle di contratti eliminati non sono più da pagare)
+    const nonPagate = annualita.filter((a) => contratti.some((c) => c.id === a.contratto_id) && impostaDaPagare(a, contratti.find((c) => c.id === a.contratto_id)) && (a.imposta_cent ?? 0) > 0 && a.data_inizio && a.data_inizio <= tra30)
       .sort((a, b) => a.data_inizio.localeCompare(b.data_inizio))
     const contrattoDi = (a: Annualita) => contratti.find((c) => c.id === a.contratto_id)
     for (const a of nonPagate.slice(0, MAX_VOCI_REGISTRO)) {

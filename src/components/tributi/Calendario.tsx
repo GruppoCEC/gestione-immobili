@@ -8,16 +8,15 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Printer } from 'lucide-react'
 import { useSessioneAttiva } from '../../lib/sessione'
 import type { Contribuente, PraticaTributo } from '../../lib/tipi'
-import { impostaRatePagate, ordinaVoci, situazioneRata, totaliDi, tutteLeRate, vociCalendario, type RataDi, type VoceCalendario } from '../../lib/tributi'
+import { impostaRatePagate, ordinaVoci, responsabiliDi, situazioneRata, totaliDi, tutteLeRate, vociCalendario, type RataDi, type VoceCalendario } from '../../lib/tributi'
 import { formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
 import { useSoloLettura } from '../SoloLettura'
 import { Avviso, Bottone, Etichetta, Riquadro, Tabella, TavolaKpi, Vuoto } from '../ui'
 import { Scomposizione } from './comuni'
+import { MESI_BREVI, MESI_LUNGHI, fineMese, maiuscola, meseDopo } from '../../lib/utils/date'
 
-const MESI = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre']
 const GIORNI = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab']   // indice = getUTCDay()
 
-const due = (n: number) => String(n).padStart(2, '0')
 /** Euro senza decimali per l'elenco degli uffici: "1.033 €" */
 const euroCorto = (c: number) => `${Math.round(c / 100).toLocaleString('it-IT', { useGrouping: 'always' } as Intl.NumberFormatOptions)} €`
 
@@ -35,11 +34,11 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
   const [inCorso, setInCorso] = useState(false)
 
   const [anno, m] = mese.split('-').map(Number)
-  const giorniNelMese = new Date(Date.UTC(anno, m, 0)).getUTCDate()
-  const primo = `${mese}-01`, ultimo = `${mese}-${due(giorniNelMese)}`
+  const primo = `${mese}-01`, ultimo = fineMese(mese)
+  const nomeMese = maiuscola(MESI_LUNGHI[m - 1])
 
   const contribuenteDi = (id: string) => contribuenti.find((c) => c.id === id)
-  const responsabili = [...new Set(contribuenti.map((c) => c.responsabile).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'it'))
+  const responsabili = responsabiliDi(contribuenti)
   const filtrate = pratiche.filter((p) => (!responsabile || contribuenteDi(p.contribuente_id)?.responsabile === responsabile) && (!societa || p.contribuente_id === societa))
   // Con una società scelta: tutte le sue prossime rate (12 mesi), qualunque sia il mese mostrato
   const prossimeSocieta = societa ? vociCalendario(filtrate, oggi, `${Number(oggi.slice(0, 4)) + 1}${oggi.slice(4)}`, oggi).filter((x) => !x.rata.pagata) : []
@@ -62,8 +61,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
   const saltateMese = regolari.filter((x) => !x.rata.pagata && x.rata.scadenza < oggi)
 
   function cambiaMese(delta: number) {
-    const d = new Date(Date.UTC(anno, m - 1 + delta, 1))
-    setMese(`${d.getUTCFullYear()}-${due(d.getUTCMonth() + 1)}`); setGiorno(null)
+    setMese(meseDopo(mese, delta)); setGiorno(null)
   }
 
   async function segna(voci: RataDi[], pagata: boolean) {
@@ -113,7 +111,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
       {/* Barra: mese, navigazione, filtro responsabile */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <button type="button" onClick={() => cambiaMese(-1)} className="btn btn-secondario btn-icona" aria-label="Mese precedente"><ChevronLeft size={18} /></button>
-        <h2 className="m-0 min-w-[220px] text-center text-[28px]">{MESI[m - 1]} {anno}</h2>
+        <h2 className="m-0 min-w-[220px] text-center text-[28px]">{nomeMese} {anno}</h2>
         <button type="button" onClick={() => cambiaMese(1)} className="btn btn-secondario btn-icona" aria-label="Mese successivo"><ChevronRight size={18} /></button>
         {mese !== oggi.slice(0, 7) && <Bottone variante="ghost" onClick={() => { setMese(oggi.slice(0, 7)); setGiorno(null) }}>Torna a oggi</Bottone>}
         <select value={responsabile} onChange={(e) => { setResponsabile(e.target.value); setGiorno(null) }} className="input ml-auto w-auto">
@@ -142,7 +140,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
       )}
 
       <TavolaKpi celle={[
-        { titolo: `In scadenza a ${MESI[m - 1].toLowerCase()}`, valore: formattaEuro(totMese.totale_cent), nota: <>{regolari.length} rate{recuperiMese.length ? ` + ${recuperiMese.length} recuperi (più riconteggio)` : ''} · Capitale {formattaEuro(totMese.quota_capitale_cent)} · Sanzioni {formattaEuro(totMese.sanzioni_cent)} · Interessi {formattaEuro(totMese.interessi_cent)}</> },
+        { titolo: `In scadenza a ${MESI_LUNGHI[m - 1]}`, valore: formattaEuro(totMese.totale_cent), nota: <>{regolari.length} rate{recuperiMese.length ? ` + ${recuperiMese.length} recuperi (più riconteggio)` : ''} · Capitale {formattaEuro(totMese.quota_capitale_cent)} · Sanzioni {formattaEuro(totMese.sanzioni_cent)} · Interessi {formattaEuro(totMese.interessi_cent)}</> },
         { titolo: 'Già pagato', valore: formattaEuro(pagatoMese.totale_cent), nota: `${regolari.filter((x) => x.rata.pagata).length} rate` },
         saltateMese.length
           ? { titolo: 'Da pagare', valore: formattaEuro(daPagareMese.totale_cent), nota: `di cui ${saltateMese.length} rate già scadute (${formattaEuro(totaliDi(saltateMese.map((x) => x.rata)).totale_cent)})`, tono: 'rosso' as const }
@@ -170,7 +168,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
                   className={`flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-2 border-l-4 px-4 py-3.5 text-left hover:bg-[rgba(29,31,32,0.04)] ${st.bordo} ${aperto ? 'bg-[rgba(89,128,166,0.08)]' : ''}`}>
                   <span className="flex w-[92px] flex-none items-baseline gap-2">
                     <span className={`num font-titolo text-[30px] font-semibold leading-none ${data === oggi ? 'text-accento-700' : ''}`}>{d.getUTCDate()}</span>
-                    <span className="text-[11px] uppercase leading-tight tracking-[0.06em] text-neutro-700">{GIORNI[d.getUTCDay()]}<br />{MESI[m - 1].slice(0, 3)}</span>
+                    <span className="text-[11px] uppercase leading-tight tracking-[0.06em] text-neutro-700">{GIORNI[d.getUTCDay()]}<br />{MESI_BREVI[m - 1]}</span>
                   </span>
                   <span className="w-[320px] flex-none"><Scomposizione etichetta="" t={totaliDi(rate.map((x) => x.rata))} evidenzia /></span>
                   <span className="flex min-w-[200px] flex-1 flex-wrap gap-x-4 gap-y-0.5 text-[13px] leading-[1.5]">
@@ -200,7 +198,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
                         riconteggio (ravvedimento). Quando le paghi, segnatele pagate: spariscono da qui e dalla data originale.
                       </Avviso></div>
                     )}
-                    <Tabella righe={rate.map((x) => ({ ...x, id: `${x.pratica.id}-${x.rata.numero}${x.recupero ? '-r' : ''}` }))} onRiga={(x) => onApriPratica(x.pratica.id)} colonne={[
+                    <Tabella righe={rate.map((x) => ({ ...x, id: `${x.pratica.id}-${x.rata.numero}-${x.rata.scadenza}${x.recupero ? '-r' : ''}` }))} onRiga={(x) => onApriPratica(x.pratica.id)} colonne={[
                       { chiave: 's', etichetta: 'Società', render: (x) => <span className="font-medium">{contribuenteDi(x.pratica.contribuente_id)?.nome}</span> },
                       { chiave: 'r', etichetta: 'Responsabile', render: (x) => contribuenteDi(x.pratica.contribuente_id)?.responsabile || '—' },
                       { chiave: 't', etichetta: 'Tributo', render: (x) => x.pratica.tributo },
@@ -241,7 +239,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
         <div className="mt-10">
           <h3 className="m-0 mb-1">{contribuenteDi(societa)?.nome}: prossime rate (12 mesi)</h3>
           <p className="mb-4 text-[13px] text-neutro-700">Tutti i piani della società, anche quelli senza rate nel mese mostrato sopra (le rate sono trimestrali, con cicli diversi da piano a piano).</p>
-          <Tabella righe={prossimeSocieta.map((x) => ({ ...x, id: `${x.pratica.id}-${x.rata.numero}${x.recupero ? '-r' : ''}` }))} onRiga={(x) => onApriPratica(x.pratica.id)} vuoto="Nessuna rata da pagare nei prossimi 12 mesi." colonne={[
+          <Tabella righe={prossimeSocieta.map((x) => ({ ...x, id: `${x.pratica.id}-${x.rata.numero}-${x.rata.scadenza}${x.recupero ? '-r' : ''}` }))} onRiga={(x) => onApriPratica(x.pratica.id)} vuoto="Nessuna rata da pagare nei prossimi 12 mesi." colonne={[
             { chiave: 'd', etichetta: 'Scadenza', render: (x) => x.recupero ? <span className="bg-att-fondo px-1 text-att-testo">{formattaData(x.data)} · recupero rata del {formattaData(x.rata.scadenza)}</span> : formattaData(x.data) },
             { chiave: 't', etichetta: 'Tributo', render: (x) => <span className="font-medium">{x.pratica.tributo}</span> },
             { chiave: 'n', etichetta: 'Rata', render: (x) => `${x.rata.numero}/${x.pratica.rate.length}` },
@@ -255,7 +253,7 @@ export default function Calendario({ contribuenti, pratiche, onApriPratica }: { 
 
       {/* Riepilogo del mese per società */}
       <div className="mt-10">
-        <h3 className="m-0 mb-1">{MESI[m - 1]} {anno}: cosa deve pagare ogni società</h3>
+        <h3 className="m-0 mb-1">{nomeMese} {anno}: cosa deve pagare ogni società</h3>
         <p className="mb-4 text-[13px] text-neutro-700">Per organizzare la cassa: quanto serve a ciascuna società nel mese, scomposto in capitale, sanzioni e interessi.</p>
         <Tabella<RigaSoc> righe={perSocieta} rigaTotale={perSocieta.length ? rigaTot : undefined} vuoto="Nessuna rata in scadenza in questo mese." colonne={[
           { chiave: 'n', etichetta: 'Società', render: (x) => <span className="font-medium">{x.nome}</span> },

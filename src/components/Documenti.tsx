@@ -20,7 +20,9 @@ import { Avviso, Bottone, Caricamento, Copia, Etichetta, Finestra, Riquadro } fr
 export function useDatiDocumenti() {
   const col = useCollezioni(['annualita', 'contratti', 'immobili', 'societa', 'conduttori', 'tassi_legali', 'comunicazioni'])
   const dati = {
-    annualita: attivi(col.dati<Annualita>('annualita')), contratti: attivi(col.dati<Contratto>('contratti')),
+    // Le annualità di contratti eliminati non contano più (niente F24 né promemoria per contratti che non esistono)
+    annualita: attivi(col.dati<Annualita>('annualita')).filter((a) => attivi(col.dati<Contratto>('contratti')).some((c) => c.id === a.contratto_id)),
+    contratti: attivi(col.dati<Contratto>('contratti')),
     immobili: attivi(col.dati<Immobile>('immobili')), societa: attivi(col.dati<Societa>('societa')), conduttori: attivi(col.dati<Conduttore>('conduttori')),
   }
   return {

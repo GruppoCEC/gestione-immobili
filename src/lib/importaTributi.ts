@@ -17,7 +17,10 @@
  *
  * Gli importi vengono presi così come sono (niente ricalcolo) e convertiti in centesimi.
  */
-import * as XLSX from 'xlsx'
+import type { WorkBook } from 'xlsx'
+
+/** La libreria Excel, caricata solo quando si importa un file (non all'apertura del sito). */
+type LibreriaXlsx = typeof import('xlsx')
 import { campiNuovo } from './store'
 import type { Contribuente, PraticaTributo, RataTributo } from './tipi'
 import type { PianoPdf } from './pdfRateizzo'
@@ -65,7 +68,7 @@ function dataIso(v: Cella): string | null {
 
 const eData = (v: Cella) => dataIso(v) !== null
 
-function leggiFoglio(wb: XLSX.WorkBook, nome: string): Riga[] | null {
+function leggiFoglio(XLSX: LibreriaXlsx, wb: WorkBook, nome: string): Riga[] | null {
   const ws = wb.Sheets[nome]
   if (!ws?.['!ref']) return null
   // Lettura sempre dalla colonna A: se la A è vuota, l'area del foglio può partire dalla B e sposterebbe gli indici
@@ -108,6 +111,23 @@ export interface PianoImportazioneTributi {
 }
 
 /* ---------------------------- abbinamento nomi ---------------------------- */
+
+/**
+ * Contribuente il cui nome, alias o ragione sociale compare come parole intere nel testo (es. "STUDIO ESEMPIO SRL"
+ * dal PDF del commercialista); vince il nome più lungo, e in caso di parità tra società diverse nessuna.
+ */
+export function contribuenteNelTesto(testo: string, elenco: Contribuente[]): Contribuente | null {
+  const t = ' ' + normalizzaNome(testo) + ' '
+  let migliore: Contribuente | null = null, lung = 0, pari = false
+  for (const c of elenco) {
+    for (const n of [c.nome, ...(c.alias ?? []), c.ragione_sociale]) {
+      const k = normalizzaNome(n)
+      if (k.length < 3 || !t.includes(' ' + k + ' ')) continue
+      if (k.length > lung) { migliore = c; lung = k.length; pari = false } else if (k.length === lung && migliore?.id !== c.id) pari = true
+    }
+  }
+  return pari ? null : migliore
+}
 
 class Rubrica {
   private elenco: Contribuente[]
@@ -156,17 +176,9 @@ class Rubrica {
     if (this.nuovi.includes(c)) c.alias = [...(c.alias ?? []), pulito]
   }
 
-  /** Contribuente il cui nome (o alias) compare come parole intere nel testo (es. "STUDIO SOMALIA LIBIA SRL"); il più lungo vince. */
+  /** Contribuente il cui nome (o alias o ragione sociale) compare come parole intere nel testo: vedi contribuenteNelTesto. */
   trovaNelTesto(testo: string): Contribuente | null {
-    const t = ' ' + normalizzaNome(testo) + ' '
-    let migliore: Contribuente | null = null, lung = 0, pari = false
-    for (const c of this.elenco) {
-      for (const k of [...this.chiavi(c), normalizzaNome(c.ragione_sociale)]) {
-        if (k.length < 3 || !t.includes(' ' + k + ' ')) continue
-        if (k.length > lung) { migliore = c; lung = k.length; pari = false } else if (k.length === lung && migliore?.id !== c.id) pari = true
-      }
-    }
-    return pari ? null : migliore
+    return contribuenteNelTesto(testo, this.elenco)
   }
 
   /** Trova o crea (con avviso) un contribuente non presente in Anagrafica. */
@@ -198,8 +210,8 @@ export function vuotaPratica(utente: string, contribuente_id: string): PraticaTr
 
 /* ---------------------------- file 1: Tributi in Sospeso ---------------------------- */
 
-function leggiAnagrafica(wb: XLSX.WorkBook, rubrica: Rubrica, utente: string, avvisi: string[]) {
-  const righe = leggiFoglio(wb, 'Anagrafica')
+function leggiAnagrafica(XLSX: LibreriaXlsx, wb: WorkBook, rubrica: Rubrica, utente: string, avvisi: string[]) {
+  const righe = leggiFoglio(XLSX, wb, 'Anagrafica')
   if (!righe) { avvisi.push('Foglio "Anagrafica" non trovato: i contribuenti verranno creati dai nomi dei fogli.'); return }
   for (const r of righe.slice(1)) {
     const nome = testo(r[0])
@@ -212,8 +224,8 @@ function leggiAnagrafica(wb: XLSX.WorkBook, rubrica: Rubrica, utente: string, av
   }
 }
 
-function leggiDefiniti(wb: XLSX.WorkBook, rubrica: Rubrica, utente: string): PraticaTributo[] {
-  const righe = leggiFoglio(wb, 'Definiti')
+function leggiDefiniti(XLSX: LibreriaXlsx, wb: WorkBook, rubrica: Rubrica, utente: string): PraticaTributo[] {
+  const righe = leggiFoglio(XLSX, wb, 'Definiti')
   if (!righe) return []
   const out: PraticaTributo[] = []
   for (const r of righe.slice(2)) {
@@ -247,19 +259,19 @@ function periodicitaDaRate(rate: RataTributo[]): string {
   return gap < 50 ? 'mensile' : gap < 120 ? 'trimestrale' : 'personalizzata'
 }
 
-function leggiPiani(wb: XLSX.WorkBook, rubrica: Rubrica, utente: string, avvisi: string[]): { pratiche: PraticaTributo[]; controlli: ControlloSocieta[] } {
+function leggiPiani(XLSX: LibreriaXlsx, wb: WorkBook, rubrica: Rubrica, utente: string, avvisi: string[]): { pratiche: PraticaTributo[]; controlli: ControlloSocieta[] } {
   const pratiche: PraticaTributo[] = []
   const controlli: ControlloSocieta[] = []
 
   // Totali del foglio Riepilogo: Ufficio | N. Piani | N. Rate | QC | Sanz | Int | Totale | QC pag | S pag | I pag | Tot pagato | …
   const riep = new Map<string, { tot: number; pag: number }>()
-  for (const r of leggiFoglio(wb, 'Riepilogo') ?? []) {
+  for (const r of leggiFoglio(XLSX, wb, 'Riepilogo') ?? []) {
     if (testo(r[0]) && typeof r[6] === 'number' && typeof r[10] === 'number') riep.set(normalizzaNome(r[0]), { tot: cent(r[6]), pag: cent(r[10]) })
   }
 
   for (const foglio of wb.SheetNames) {
     if (normalizzaNome(foglio) === 'riepilogo') continue
-    const righe = leggiFoglio(wb, foglio) ?? []
+    const righe = leggiFoglio(XLSX, wb, foglio) ?? []
     const c = rubrica.trovaOCrea(foglio, 'file Rateizzi')
     let corrente: PraticaTributo | null = null
     let dichiarate = 0
@@ -418,11 +430,12 @@ function aggiungiPianiDaPdf(
  * Legge i file e prepara contribuenti e pratiche da aggiungere, senza toccare i dati.
  * `esistenti` servono per non creare doppioni se l'importazione viene ripetuta.
  */
-export function preparaImportazioneTributi(
+export async function preparaImportazioneTributi(
   file: FileTributi,
   esistenti: { contribuenti: Contribuente[]; pratiche: PraticaTributo[] },
   utente: string,
-): PianoImportazioneTributi {
+): Promise<PianoImportazioneTributi> {
+  const XLSX = await import('xlsx') // caricata solo quando serve
   const avvisi: string[] = []
   const rubrica = new Rubrica(esistenti.contribuenti, utente)
   let daSospeso: PraticaTributo[] = []
@@ -432,9 +445,9 @@ export function preparaImportazioneTributi(
   // Prima l'Anagrafica (così i nomi "ufficiali" sono quelli dell'Anagrafica), poi i piani, poi le righe sciolte
   const wbS = file.sospeso ? XLSX.read(file.sospeso, { type: 'array' }) : null
   const wbR = file.rateizzi ? XLSX.read(file.rateizzi, { type: 'array' }) : null
-  if (wbS) leggiAnagrafica(wbS, rubrica, utente, avvisi)
-  if (wbR) ({ pratiche: piani, controlli } = leggiPiani(wbR, rubrica, utente, avvisi))
-  if (wbS) daSospeso = leggiDefiniti(wbS, rubrica, utente)
+  if (wbS) leggiAnagrafica(XLSX, wbS, rubrica, utente, avvisi)
+  if (wbR) ({ pratiche: piani, controlli } = leggiPiani(XLSX, wbR, rubrica, utente, avvisi))
+  if (wbS) daSospeso = leggiDefiniti(XLSX, wbS, rubrica, utente)
 
   // Le righe di "Definiti" che corrispondono a un piano dettagliato completano il piano invece di duplicarlo
   const sciolte: PraticaTributo[] = []
@@ -514,10 +527,11 @@ export interface PianoAnagrafica {
  * aggiorna responsabile ed email delle società già presenti (riconosciute anche dagli alias); le società mancanti
  * vengono aggiunte, senza pratiche. Le celle vuote dell'Excel non cancellano i dati già presenti. Piani e avvisi non vengono toccati.
  */
-export function preparaAnagrafica(buffer: ArrayBuffer, esistenti: Contribuente[], utente: string): PianoAnagrafica {
+export async function preparaAnagrafica(buffer: ArrayBuffer, esistenti: Contribuente[], utente: string): Promise<PianoAnagrafica> {
+  const XLSX = await import('xlsx') // caricata solo quando serve
   const avvisi: string[] = []
   const wb = XLSX.read(buffer, { type: 'array' })
-  const righeFoglio = leggiFoglio(wb, 'Anagrafica')
+  const righeFoglio = leggiFoglio(XLSX, wb, 'Anagrafica')
   if (!righeFoglio) return { nuovi: [], aggiornati: [], righe: [], avvisi: ['Nel file non c\'è il foglio "Anagrafica".'] }
   const rubrica = new Rubrica(esistenti.filter((c) => !c.eliminato_il), utente)
   const modificati = new Map<string, Contribuente>()

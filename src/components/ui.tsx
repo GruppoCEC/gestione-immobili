@@ -2,7 +2,8 @@
  * Componenti grafici di base riutilizzati in tutte le sezioni (sistema "Industry").
  * Colori e classi sono in index.css: qui niente colori con opacità Tailwind (vedi nota Chrome 109).
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { analizzaEuro, centesimiInTesto } from '../lib/utils/formato'
 import { Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, Copy, Info, Search, TriangleAlert, X } from 'lucide-react'
 
 /** Le quattro crocette "+" sugli angoli: vanno dentro un elemento con classe "blueprint" o "con-crocette". */
@@ -75,26 +76,113 @@ export function TavolaKpi({ celle }: { celle: CellaKpi[] }) {
   )
 }
 
+/**
+ * Collegamento tra una Finestra e il modulo che contiene: il modulo segnala se ci sono modifiche non salvate e,
+ * per uscire (Annulla), passa dalla finestra, che in quel caso chiede conferma invece di chiudere perdendo i dati.
+ */
+interface ContestoFinestra {
+  segnalaModifiche: (chi: string, modificato: boolean) => void
+  esci: (azione: () => void) => void
+}
+const ContestoFinestra = createContext<ContestoFinestra | null>(null)
+
+/** Finestre aperte, dalla più vecchia alla più recente: il tasto Esc agisce solo su quella in primo piano. */
+const finestreAperte: string[] = []
+
+/** Da usare nei moduli dentro una Finestra: segnala le modifiche non salvate. Restituisce la funzione per uscire con conferma. */
+export function useModificheNonSalvate(modificato: boolean): (azione: () => void) => void {
+  const ctx = useContext(ContestoFinestra)
+  const chi = useId()
+  useEffect(() => {
+    ctx?.segnalaModifiche(chi, modificato)
+    return () => ctx?.segnalaModifiche(chi, false)
+  }, [ctx, chi, modificato])
+  return useCallback((azione: () => void) => (ctx ? ctx.esci(azione) : azione()), [ctx])
+}
+
+/**
+ * Finestra sopra la pagina. Si chiude solo con la X, il tasto Esc o i pulsanti del modulo (mai cliccando fuori:
+ * basterebbe un clic sbagliato per perdere quello che si stava scrivendo). Se il modulo ha modifiche non salvate,
+ * prima di chiudere chiede conferma.
+ */
 export function Finestra({ titolo, kicker, aperta, onChiudi, children, larga }: { titolo: string; kicker?: ReactNode; aperta: boolean; onChiudi: () => void; children: ReactNode; larga?: boolean }) {
+  const [modificati, setModificati] = useState<Set<string>>(() => new Set())
+  const [uscita, setUscita] = useState<(() => void) | null>(null)
+  const conModifiche = modificati.size > 0
+  const idFinestra = useId()
+
+  const segnalaModifiche = useCallback((chi: string, modificato: boolean) => {
+    setModificati((prec) => {
+      if (prec.has(chi) === modificato) return prec
+      const nuovo = new Set(prec)
+      if (modificato) nuovo.add(chi); else nuovo.delete(chi)
+      return nuovo
+    })
+  }, [])
+  const esci = useCallback((azione: () => void) => {
+    if (conModifiche) setUscita(() => azione); else azione()
+  }, [conModifiche])
+  const contesto = useMemo(() => ({ segnalaModifiche, esci }), [segnalaModifiche, esci])
+
+  // Alla chiusura si azzera tutto (la finestra resta montata anche quando è chiusa)
+  const [eraAperta, setEraAperta] = useState(aperta)
+  if (aperta !== eraAperta) {
+    setEraAperta(aperta)
+    if (!aperta) { setModificati(new Set()); setUscita(null) }
+  }
+
+  // Registro della finestra tra quelle aperte (per sapere quale è in primo piano)
   useEffect(() => {
     if (!aperta) return
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onChiudi() }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [aperta, onChiudi])
+    finestreAperte.push(idFinestra)
+    return () => { const i = finestreAperte.lastIndexOf(idFinestra); if (i >= 0) finestreAperte.splice(i, 1) }
+  }, [aperta, idFinestra])
+
+  useEffect(() => {
+    if (!aperta) return
+    const tasto = (e: KeyboardEvent) => {
+      // Con più finestre una sopra l'altra (es. annualità dentro il registro) Esc chiude solo quella in primo piano
+      if (e.key !== 'Escape' || finestreAperte[finestreAperte.length - 1] !== idFinestra) return
+      if (uscita) setUscita(null)   // Esc sull'avviso: si torna a modificare
+      else esci(onChiudi)
+    }
+    window.addEventListener('keydown', tasto)
+    return () => window.removeEventListener('keydown', tasto)
+  }, [aperta, onChiudi, esci, uscita, idFinestra])
+
+  // Chiudendo o ricaricando la scheda del browser con modifiche non salvate, il browser chiede conferma
+  useEffect(() => {
+    if (!aperta || !conModifiche) return
+    const avvisa = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', avvisa)
+    return () => window.removeEventListener('beforeunload', avvisa)
+  }, [aperta, conModifiche])
+
   if (!aperta) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgba(43,43,45,0.5)] p-4 md:p-12" onClick={onChiudi}>
-      <Riquadro className={`ombra-lg w-full bg-sfondo ${larga ? 'max-w-[820px]' : 'max-w-[640px]'}`} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgba(43,43,45,0.5)] p-4 md:p-12">
+      <Riquadro role="dialog" aria-modal="true" aria-label={titolo} className={`ombra-lg w-full bg-sfondo ${larga ? 'max-w-[820px]' : 'max-w-[640px]'}`}>
         <div className="flex items-start justify-between gap-4 border-b border-divisore px-6 py-5 md:px-7">
           <div className="min-w-0">
             {kicker && <div className="kicker mb-1">{kicker}</div>}
             <h2 className="m-0 text-[26px]">{titolo}</h2>
           </div>
-          <button onClick={onChiudi} aria-label="Chiudi" className="btn btn-secondario btn-icona flex-none"><X size={18} /></button>
+          <button onClick={() => esci(onChiudi)} aria-label="Chiudi" className="btn btn-secondario btn-icona flex-none"><X size={18} /></button>
         </div>
-        <div className="px-6 py-6 md:px-7">{children}</div>
+        <div className="px-6 py-6 md:px-7"><ContestoFinestra.Provider value={contesto}>{children}</ContestoFinestra.Provider></div>
       </Riquadro>
+      {uscita && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(43,43,45,0.35)] p-4">
+          <Riquadro role="alertdialog" aria-modal="true" aria-label="Modifiche non salvate" className="ombra-lg w-full max-w-[460px] bg-sfondo px-6 py-6">
+            <h3 className="m-0 mb-2">Ci sono modifiche non salvate</h3>
+            <p className="m-0 mb-5 text-sm text-neutro-700">Se esci adesso, quello che hai scritto in questa finestra andrà perso.</p>
+            <div className="flex flex-wrap justify-end gap-2.5">
+              <Bottone variante="secondario" onClick={() => { const azione = uscita; setUscita(null); setModificati(new Set()); azione() }}>Esci senza salvare</Bottone>
+              <Bottone autoFocus onClick={() => setUscita(null)}>Continua a modificare</Bottone>
+            </div>
+          </Riquadro>
+        </div>
+      )}
     </div>
   )
 }
@@ -117,6 +205,17 @@ export function Avviso({ tipo = 'info', children }: { tipo?: 'info' | 'errore' |
 
 export function Vuoto({ children }: { children: ReactNode }) {
   return <Riquadro className="p-14 text-center text-neutro-700">{children}</Riquadro>
+}
+
+/** Campo importo compatto (tabelle e moduli su misura): mostra "1350,50", salva i centesimi mentre si scrive. */
+export function InputEuro({ valore, onChange, className = '' }: { valore: number | null; onChange: (c: number | null) => void; className?: string }) {
+  const [testo, setTesto] = useState<string | null>(null)
+  const mostrato = testo ?? centesimiInTesto(valore)
+  return (
+    <input value={mostrato} inputMode="decimal" className={`input num text-right ${className}`}
+      onFocus={() => setTesto(mostrato)} onChange={(e) => { setTesto(e.target.value); onChange(analizzaEuro(e.target.value)) }}
+      onBlur={() => setTesto(null)} />
+  )
 }
 
 export function Caricamento() {

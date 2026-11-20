@@ -1,10 +1,15 @@
 /** Regole dell'imposta di registro proposte dall'app (modificabili nelle schede). */
-import type { Contratto } from './tipi'
+import type { Contratto, Societa } from './tipi'
 
-/** Aliquota e base imponibile proposte in base al tipo di contratto (modificabili nella scheda). */
-export function regoleImposta(c: Contratto): { percento: number; base: number } {
+/**
+ * Aliquota e base imponibile proposte in base al tipo di contratto (modificabili nella scheda).
+ * Uso diverso / commerciale: 1% se il locatore è soggetto IVA (una società, anche se la locazione è esente IVA),
+ * 2% se è una persona fisica. Se il locatore non è noto si usa il regime IVA del contratto.
+ */
+export function regoleImposta(c: Contratto, locatore?: Pick<Societa, 'tipo'>): { percento: number; base: number } {
   const usoDiverso = ['commerciale_6_6', 'commerciale_9_9', 'uso_diverso'].includes(c.tipologia)
-  if (usoDiverso) return { percento: c.regime_iva === 'con_iva' ? 1 : 2, base: 100 }
+  const soggettoIva = locatore ? locatore.tipo === 'societa' : c.regime_iva === 'con_iva'
+  if (usoDiverso) return { percento: soggettoIva ? 1 : 2, base: 100 }
   if (c.tipologia === 'abitativo_3_2') return { percento: 2, base: 70 }
   return { percento: 2, base: 100 }
 }

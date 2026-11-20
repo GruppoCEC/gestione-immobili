@@ -8,11 +8,11 @@ import { FinestraF24, FinestraLetteraIstat, StatoVersamento, useDatiDocumenti } 
 import { SoloSeModifica } from '../components/SoloLettura'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Copia, Etichetta, IntestazionePagina, Riquadro, Segmentato, Tabella, filtraTesto } from '../components/ui'
 import { calcolaRavvedimento, formattaPercentuale, scadenzaVersamento } from '../lib/ravvedimento'
-import { GIORNI_ANTICIPO, contrattiSenzaScadenza, proroghePreviste, type ProrogaAttesa } from '../lib/proroghe'
+import { GIORNI_ANTICIPO, contrattiScadutiSenzaRinnovo, contrattiSenzaScadenza, proroghePreviste, type ProrogaAttesa } from '../lib/proroghe'
 import { useSessioneAttiva } from '../lib/sessione'
 import { aggiorna, campiModifica, campiNuovo } from '../lib/store'
 import { TIPI_COMUNICAZIONE, TIPOLOGIE_CONTRATTO, etichettaDi, inCedolare, type Annualita, type TassoLegale } from '../lib/tipi'
-import { analizzaEuro, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { analizzaEuro, centesimiInTesto, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
 
 type Scheda = 'f24' | 'proroghe' | 'istat' | 'calcolo' | 'storico'
 type Riga = Annualita & { immobile: string; societa: string; conduttore: string; scadenza: string }
@@ -33,18 +33,24 @@ export default function PaginaComunicazioni() {
     return { ...a, immobile: ctx.immobile?.indirizzo ?? '—', societa: ctx.societa?.ragione_sociale ?? '—', conduttore: ctx.conduttore?.denominazione ?? '—', scadenza: a.data_inizio ? scadenzaVersamento(a.data_inizio) : '' }
   }).filter((r) => !inCedolare(d.contratti.find((c) => c.id === r.contratto_id)))
 
-  const perF24 = filtraTesto(righe.filter((r) => r.proroga !== 'si' && (r.imposta_cent ?? 0) > 0 && r.data_inizio && (mostraTutte === 'tutte' || r.imposta_pagata !== 'si')), ricerca)
+  // Locatore del contratto (per l'aliquota proposta: 1% se società) e annualità già registrate alla data di una proroga:
+  // queste ultime si pagano con il codice 1504 e compaiono solo nella scheda Proroghe, non anche qui con il 1501
+  const locatoreDi = (c: { immobile_id: string }) => d.societa.find((s) => s.id === d.immobili.find((i) => i.id === c.immobile_id)?.societa_id)
+  const idProroghe = new Set(proroghePreviste(d.contratti, d.annualita, oggi, true).filter((p) => p.registrata).map((p) => p.id))
+  const perF24Base = righe.filter((r) => r.proroga !== 'si' && !idProroghe.has(r.id) && (r.imposta_cent ?? 0) > 0 && r.data_inizio)
+  const perF24 = filtraTesto(perF24Base.filter((r) => mostraTutte === 'tutte' || r.imposta_pagata !== 'si'), ricerca)
     .sort((a, b) => a.scadenza.localeCompare(b.scadenza))
   const perIstat = filtraTesto(righe.filter((r) => r.istat_applicato === 'si' && (mostraTutte === 'tutte' || !r.istat_data_lettera)), ricerca)
     .sort((a, b) => a.data_inizio.localeCompare(b.data_inizio))
-  const nF24 = righe.filter((r) => r.proroga !== 'si' && (r.imposta_cent ?? 0) > 0 && r.data_inizio && r.imposta_pagata !== 'si').length
+  const nF24 = perF24Base.filter((r) => r.imposta_pagata !== 'si').length
 
   // Proroghe: scadenze passate non pagate + quelle entro 30 giorni (calcolate dai contratti)
   type RigaProroga = ProrogaAttesa & { immobile: string; societa: string; conduttore: string }
   const conDescrizione = (p: ProrogaAttesa): RigaProroga => { const ctx = d.contestoDa(p.annualita); return { ...p, immobile: ctx.immobile?.indirizzo ?? '—', societa: ctx.societa?.ragione_sociale ?? '—', conduttore: ctx.conduttore?.denominazione ?? '—' } }
-  const proroghe = filtraTesto(proroghePreviste(d.contratti, d.annualita, oggi, mostraTutte === 'tutte').map(conDescrizione), ricerca, (p) => `${p.immobile} ${p.societa} ${p.conduttore}`)
+  const proroghe = filtraTesto(proroghePreviste(d.contratti, d.annualita, oggi, mostraTutte === 'tutte', locatoreDi).map(conDescrizione), ricerca, (p) => `${p.immobile} ${p.societa} ${p.conduttore}`)
   const nProroghe = proroghePreviste(d.contratti, d.annualita, oggi).length
   const senzaScadenza = contrattiSenzaScadenza(d.contratti)
+  const senzaRinnovo = contrattiScadutiSenzaRinnovo(d.contratti, oggi)
   const nIstat = righe.filter((r) => r.istat_applicato === 'si' && !r.istat_data_lettera).length
 
   const colImmobile = { chiave: 'imm', etichetta: 'Immobile', render: (r: Riga) => <div><div className="font-medium">{r.immobile}</div><div className="text-xs text-neutro-700">{r.societa}</div></div> }
@@ -83,8 +89,9 @@ export default function PaginaComunicazioni() {
       ) : scheda === 'proroghe' ? (
         <>
           <div className="mb-4">
-            <Avviso tipo="info">Elenco automatico delle proroghe dei contratti (rinnovo alla scadenza, anche tacito): scadenze già passate e non ancora pagate e quelle dei prossimi {GIORNI_ANTICIPO} giorni. L'imposta della prima annualità della proroga si paga entro 30 giorni dalla scadenza con codice tributo <strong>1504</strong>; con l'F24 va presentato anche il modello RLI. Esclusi i contratti cessati, in cedolare secca e transitori.</Avviso>
+            <Avviso tipo="info">Elenco automatico delle proroghe dei contratti (rinnovo alla scadenza, anche tacito): scadenze già passate e non ancora pagate e quelle dei prossimi {GIORNI_ANTICIPO} giorni. L'imposta della prima annualità della proroga si paga entro 30 giorni dalla scadenza con codice tributo <strong>1504</strong>; con l'F24 va presentato anche il modello RLI. Esclusi i contratti cessati, in cedolare secca, transitori e quelli con «Rinnovo automatico: No».</Avviso>
           </div>
+          {senzaRinnovo.length > 0 && <div className="mb-4"><Avviso tipo="attenzione">{senzaRinnovo.length === 1 ? '1 contratto attivo è arrivato' : `${senzaRinnovo.length} contratti attivi sono arrivati`} alla scadenza con «Rinnovo automatico: No», quindi non compare tra le proroghe: verificare se è cessato (registrare la cessazione) o se il rinnovo va indicato «Sì» (Contratti → Durata e scadenze). {senzaRinnovo.map((c) => { const i = d.immobili.find((x) => x.id === c.immobile_id); return `${i?.indirizzo ?? '—'} (scadenza ${formattaData(c.prima_scadenza)})` }).join(' · ')}</Avviso></div>}
           {senzaScadenza.length > 0 && <div className="mb-4"><Avviso tipo="attenzione">{senzaScadenza.length} {senzaScadenza.length === 1 ? 'contratto attivo non ha' : 'contratti attivi non hanno'} la prima scadenza: le proroghe non possono essere calcolate finché non viene inserita (Contratti → Durata e scadenze).</Avviso></div>}
           <Tabella<RigaProroga> righe={proroghe} onRiga={(p) => setProrogaAperta(p.annualita)} vuoto={mostraTutte === 'da_fare' ? 'Nessuna proroga da pagare: né scadenze passate non registrate né scadenze nei prossimi 30 giorni.' : 'Nessuna proroga calcolata.'} colonne={[
             { chiave: 'imm', etichetta: 'Immobile', render: (p) => <div><div className="font-medium">{p.immobile}</div><div className="text-xs text-neutro-700">{p.societa}</div></div> },
@@ -138,12 +145,12 @@ function CalcoloRavvedimento({ righe, tassi, tassiSalvati, onPreparaF24 }: { rig
   function scegli(id: string) {
     setAnnualitaId(id)
     const r = righe.find((x) => x.id === id)
-    if (r) { setImpostaTesto(((r.imposta_cent ?? 0) / 100).toFixed(2).replace('.', ',')); setInizio(r.data_inizio) }
+    if (r) { setImpostaTesto(centesimiInTesto(r.imposta_cent ?? 0)); setInizio(r.data_inizio) }
   }
   const imposta = analizzaEuro(impostaTesto)
   const scadenza = inizio ? scadenzaVersamento(inizio) : ''
   const r = imposta && scadenza && pagamento ? calcolaRavvedimento(imposta, scadenza, pagamento, tassi) : null
-  const eur = (c: number) => (c / 100).toFixed(2).replace('.', ',')
+  const eur = (c: number) => centesimiInTesto(c)
 
   return (
     <div className="grid items-start gap-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))' }}>

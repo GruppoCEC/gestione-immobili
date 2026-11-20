@@ -11,10 +11,12 @@ import { useSessioneAttiva } from '../lib/sessione'
 import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
 import {
   MODALITA_REGISTRAZIONE, PERIODICITA, inCedolare, REGIMI_IVA, SI_NO, STATI_CONTRATTO, TIPOLOGIE_CONTRATTO, etichettaDi, statoIva,
-  type Conduttore, type Contratto, type Immobile, type Societa,
+  type Annualita, type Conduttore, type Contratto, type Immobile, type Societa,
 } from '../lib/tipi'
+import { canoneMensilePer } from '../lib/canone'
+import { prossimaScadenza } from '../lib/proroghe'
 import { useCollezioni } from '../lib/useCollezioni'
-import { aggiungiAnni, formattaData, formattaEuro } from '../lib/utils/formato'
+import { aggiungiAnni, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
 
 const VUOTO: Partial<Contratto> = {
   immobile_id: '', conduttore_id: '', tipologia: '', stato: 'attivo', data_sottoscrizione: '', data_decorrenza: '', durata_anni: null,
@@ -48,7 +50,7 @@ const NOMI_FILTRO: Record<Filtro, string> = { tutti: 'Tutti', attivo: 'Attivi', 
 
 export default function PaginaContratti() {
   const { token, nome } = useSessioneAttiva()
-  const { dati, caricamento, errore } = useCollezioni(['contratti', 'immobili', 'conduttori', 'societa'])
+  const { dati, caricamento, errore } = useCollezioni(['contratti', 'immobili', 'conduttori', 'societa', 'annualita'])
   const [ricerca, setRicerca] = useState('')
   const [scheda, setScheda] = useState<Filtro>('tutti')
   const [aperto, setAperto] = useState<Partial<Contratto> | null>(null)
@@ -57,6 +59,12 @@ export default function PaginaContratti() {
   const immobili = attivi(dati<Immobile>('immobili'))
   const conduttori = attivi(dati<Conduttore>('conduttori'))
   const societa = attivi(dati<Societa>('societa'))
+  const annualita = attivi(dati<Annualita>('annualita'))
+  const oggi = oggiIso()
+  // Canone mensile (imponibile) in vigore oggi, con gli aumenti ISTAT del registro annuale
+  const canoneOggi = (c: Contratto) => canoneMensilePer(c, annualita, oggi.slice(0, 7)).imponibile_cent
+  // Scadenza del periodo in corso dopo i rinnovi (per i cessati resta quella indicata)
+  const scadenzaDi = (c: Contratto) => (c.stato === 'cessato' ? c.prima_scadenza : prossimaScadenza(c, oggi))
   const immobile = (id: string) => immobili.find((i) => i.id === id)
   const conduttore = (id: string) => conduttori.find((c) => c.id === id)?.denominazione ?? '—'
   const societaDi = (c: Contratto) => societa.find((s) => s.id === immobile(c.immobile_id)?.societa_id)?.ragione_sociale ?? '—'
@@ -122,7 +130,7 @@ export default function PaginaContratti() {
     setAperto(null)
   }
 
-  const totaleAnnuo = righe.reduce((s, c) => s + (c.canone_annuale_cent ?? 0), 0)
+  const totaleAnnuo = righe.reduce((s, c) => s + (canoneOggi(c) ?? 0) * 12, 0)
   const tonoStato = (s: string) => (s === 'attivo' ? 'verde' : s === 'in_disdetta' ? 'giallo' : 'grigio')
 
   const conta = (f: Filtro) => tutti.filter((c) => f === 'tutti' || c.stato === f).length
@@ -151,9 +159,9 @@ export default function PaginaContratti() {
             { chiave: 'con', etichetta: 'Conduttore', render: (c) => conduttore(c.conduttore_id) },
             { chiave: 'tip', etichetta: 'Tipo', render: (c) => <span className="text-[13px]">{etichettaDi(TIPOLOGIE_CONTRATTO, c.tipologia)}</span> },
             { chiave: 'dec', etichetta: 'Decorrenza', render: (c) => <span className="num">{formattaData(c.data_decorrenza)}</span> },
-            { chiave: 'scad', etichetta: 'Scadenza', render: (c) => <span className="num">{formattaData(c.prima_scadenza)}</span> },
-            { chiave: 'mens', etichetta: 'Canone mensile', allinea: 'dx', render: (c) => <span className="whitespace-nowrap font-medium">{formattaEuro(c.canone_mensile_cent)}</span> },
-            { chiave: 'ann', etichetta: 'Canone annuale', allinea: 'dx', render: (c) => <span className="whitespace-nowrap">{formattaEuro(c.canone_annuale_cent)}</span> },
+            { chiave: 'scad', etichetta: 'Scadenza', render: (c) => { const s = scadenzaDi(c); return <span className="num" title={s !== c.prima_scadenza ? `Prima scadenza ${formattaData(c.prima_scadenza)}, poi rinnovato` : undefined}>{formattaData(s)}{s !== c.prima_scadenza && <span className="block text-xs text-neutro-700">rinnovato</span>}</span> } },
+            { chiave: 'mens', etichetta: 'Canone mensile', allinea: 'dx', render: (c) => <span className="whitespace-nowrap font-medium">{formattaEuro(canoneOggi(c))}</span> },
+            { chiave: 'ann', etichetta: 'Canone annuale', allinea: 'dx', render: (c) => { const m = canoneOggi(c); return <span className="whitespace-nowrap">{formattaEuro(m == null ? null : m * 12)}</span> } },
             { chiave: 'reg', etichetta: 'Imp. registro annua', allinea: 'dx', render: (c) => inCedolare(c) ? <Etichetta tono="verde">Cedolare secca</Etichetta> : <span className="whitespace-nowrap">{formattaEuro(c.imposta_registro_annuale_cent)}</span> },
             { chiave: 'iva', etichetta: 'IVA', render: (c) => { const s = statoIva(c); return <Etichetta tono={s.tono}>{s.testo}</Etichetta> } },
             { chiave: 'stato', etichetta: 'Stato', render: (c) => <Etichetta tono={tonoStato(c.stato)}>{etichettaDi(STATI_CONTRATTO, c.stato)}</Etichetta> },

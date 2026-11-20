@@ -9,11 +9,12 @@
  * Il nome della società NON è nel PDF: si sceglie nel modulo (o si riconosce dall'importo).
  *
  * Secondo formato riconosciuto: il prospetto "Determinazione dei versamenti rateali" prodotto dal programma del
- * commercialista, con "Azienda: 992 - STUDIO SOMALIA LIBIA SRL", date di elaborazione e ricevimento,
+ * commercialista, con "Azienda: 123 - STUDIO ESEMPIO SRL", date di elaborazione e ricevimento,
  * "Sezione/tributo: ERARIO/9001", "Codice tributo interessi: 9002", "Importo totale da rateizzare" e la tabella
  *   RATA | DATA VERS. | IMPO. DOVUTO | INTERESSI (vuoti sulla prima rata) | TOTALE | TIPO VERS. | DELEGA | DATA INTE. | VERSATO
  * La libreria pdf.js (gratuita) viene caricata solo quando serve; si usa la versione "legacy" per i browser datati.
  */
+import { browserDatato } from './compatibilita'
 
 export interface RigaPdf {
   numero: number
@@ -26,7 +27,7 @@ export interface RigaPdf {
 
 export interface PianoPdf {
   formato: 'agenzia' | 'commercialista'
-  azienda: string             // solo formato commercialista, es. "STUDIO SOMALIA LIBIA SRL" (senza il codice)
+  azienda: string             // solo formato commercialista, es. "STUDIO ESEMPIO SRL" (senza il codice)
   data_elaborazione: string   // ISO o ''
   data_ricevimento: string    // ISO o ''
   importo_cent: number        // importo dilazionato (somma delle quote 9001)
@@ -43,8 +44,14 @@ const RE_IMPORTO = /^-?[\d.]+,\d\d$/
 /** Estrae il testo del PDF (tutte le pagine), una riga per elemento di testo. */
 async function testoPdf(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
-  const worker = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default
-  pdfjs.GlobalWorkerOptions.workerSrc = worker
+  if (browserDatato) {
+    // Browser datato (es. Chrome 109): la lettura avviene nella pagina, dove valgono le funzioni aggiunte da
+    // lib/compatibilita.ts (il processo separato "worker" non le avrebbe e il PDF non verrebbe letto)
+    const g = globalThis as unknown as { pdfjsWorker?: unknown }
+    g.pdfjsWorker ??= await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs')
+  } else {
+    pdfjs.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default
+  }
   const compito = pdfjs.getDocument({ data: new Uint8Array(buffer) })
   const doc = await compito.promise
   const parti: string[] = []

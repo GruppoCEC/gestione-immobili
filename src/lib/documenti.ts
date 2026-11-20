@@ -7,6 +7,7 @@ import { CODICE_IMPOSTA, CODICE_IMPOSTA_PROROGA, CODICE_INTERESSI, CODICE_SANZIO
 import { attivi } from './store'
 import { statoIva, type Annualita, type Conduttore, type Contratto, type Immobile, type Societa, type TassoLegale } from './tipi'
 import { formattaData, formattaEuro } from './utils/formato'
+import { meseLungo } from './utils/date'
 
 /** Tassi legali da usare: valori già noti + quelli salvati nell'app (che hanno la precedenza). */
 export function tassiLegali(salvati: TassoLegale[]): Record<number, number> {
@@ -175,9 +176,8 @@ export function preparaF24(ctx: ContestoAnnualita, pagamento: string, tassi: Rec
 
 /* ========================= Lettera ISTAT ========================= */
 
-const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre']
 /** "2026-05" → "maggio 2026" */
-export const meseEsteso = (am: string) => (/^\d{4}-\d{2}/.test(am) ? `${MESI[Number(am.slice(5, 7)) - 1]} ${am.slice(0, 4)}` : am)
+export const meseEsteso = meseLungo
 const numero = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('it-IT', { maximumFractionDigits: 3 }))
 
 export interface DatiLetteraIstat {

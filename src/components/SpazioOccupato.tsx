@@ -14,7 +14,7 @@ import { aggiorna, attivi, campiModifica, inCache, type NomeCollezione } from '.
 import type { Allegato, Contribuente, PraticaTributo } from '../lib/tipi'
 import { statoEffettivo } from '../lib/tributi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { formattaByte, formattaData } from '../lib/utils/formato'
+import { formattaByte, formattaData, oggiIso } from '../lib/utils/formato'
 import { Avviso, Bottone, Finestra, Riquadro } from './ui'
 
 const SEZIONI: Record<string, string> = {
@@ -142,7 +142,7 @@ function LiberaSpazio({ token, nome, allegati, eliminati, pratiche, contribuenti
       setStato('Creazione dello ZIP…')
       const zip = zipSync(file, { level: 0 })   // i PDF sono già compressi: niente ricompressione, più veloce
       const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }))
-      const l = document.createElement('a'); l.href = url; l.download = `allegati-archiviati-${new Date().toISOString().slice(0, 10)}.zip`; l.click()
+      const l = document.createElement('a'); l.href = url; l.download = `allegati-archiviati-${oggiIso()}.zip`; l.click()
       setTimeout(() => URL.revokeObjectURL(url), 60_000)
       setZipFatto(chiaveSel)
       setEsito({ tipo: 'ok', testo: `ZIP scaricato con ${selezionati.length} file (${formattaByte(totaleScelti)}). Conservalo sul Mac prima di rimuovere i file.` })

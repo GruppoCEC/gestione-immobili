@@ -5,15 +5,14 @@
  */
 import { Fragment, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Printer } from 'lucide-react'
-import { Bottone, Caricamento } from '../components/ui'
-import logo from '../assets/logo-gruppo.png'
+import { Caricamento } from '../components/ui'
 import { attivi } from '../lib/store'
 import { STATI_PRATICA, TIPI_PRATICA, etichettaDi, type Contribuente, type PraticaTributo } from '../lib/tipi'
-import { daInserire, decaduto, gestita, inCorso, ordinaVoci, residuoDecaduto, riepilogoPratiche, riepilogoRate, situazioneRata, statoEffettivo, termineRegolarizzazione, totaliDi, tutteLeRate, vociCalendario, type Totali, type VoceCalendario } from '../lib/tributi'
+import { daInserire, decaduto, gestita, scomposizioneBreve, inCorso, ordinaVoci, residuoDecaduto, riepilogoPratiche, riepilogoRate, situazioneRata, statoEffettivo, termineRegolarizzazione, totaliDi, tutteLeRate, vociCalendario, type Totali, type VoceCalendario } from '../lib/tributi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { aggiungiMesi, formattaData, formattaDataOra, formattaEuro, oggiIso } from '../lib/utils/formato'
-import { giorniTra } from '../lib/ravvedimento'
+import { aggiungiMesi, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { dataEstesa, giorniTra } from '../lib/utils/date'
+import { BarraStampa, COLORI_STAMPA, IntestazioneStampa, StileA4Verticale } from '../components/stampa'
 
 function Sezione({ titolo, nota, children }: { titolo: string; nota?: string; children: ReactNode }) {
   return (
@@ -45,7 +44,7 @@ function Box({ titolo, t, nota, rosso }: { titolo: string; t?: Totali; nota?: Re
     <div className={`border px-3 py-2.5 ${rosso ? 'border-err-bordo bg-err-fondo text-err-testo' : 'border-divisore'}`}>
       <div className="text-[10px] uppercase tracking-[0.08em]">{titolo}</div>
       {t && <div className="num mt-1 font-titolo text-[22px] font-semibold leading-none">{formattaEuro(t.totale_cent)}</div>}
-      {t && <div className="num mt-1 text-[10.5px]">Cap. {formattaEuro(t.quota_capitale_cent)} · Sanz. {formattaEuro(t.sanzioni_cent)} · Int. {formattaEuro(t.interessi_cent)}</div>}
+      {t && <div className="num mt-1 text-[10.5px]">{scomposizioneBreve(t)}</div>}
       {nota && <div className="mt-1 text-[11px]">{nota}</div>}
     </div>
   )
@@ -55,7 +54,7 @@ function SchedaUfficio({ c, pratiche, mesi, prima }: { c: Contribuente; pratiche
   const oggi = oggiIso()
   const fine = aggiungiMesi(oggi, mesi)
   const mie = pratiche.filter((p) => p.contribuente_id === c.id)
-  const attivi_ = mie.filter(inCorso).sort((a, b) => a.tributo.localeCompare(b.tributo))
+  const attivi_ = mie.filter(inCorso).sort((a, b) => a.tributo.localeCompare(b.tributo, 'it'))
   const rate = tutteLeRate(attivi_)
   const saltate = rate.filter((x) => !x.rata.pagata && x.rata.scadenza < oggi)
   const prossime = rate.filter((x) => !x.rata.pagata && x.rata.scadenza >= oggi && x.rata.scadenza <= fine)
@@ -67,17 +66,8 @@ function SchedaUfficio({ c, pratiche, mesi, prima }: { c: Contribuente; pratiche
 
   return (
     <div className={`pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-10 text-sm md:px-[52px] md:py-12 print:my-0 ${prima ? '' : 'interrompi-prima'}`}>
-      <header className="flex items-start justify-between gap-6 border-b-2 border-testo pb-4">
-        <div className="min-w-0">
-          <div className="kicker">Scheda tributi rateizzati</div>
-          <h1 className="mt-1 text-[34px]">{c.nome}</h1>
-          <div className="mt-1 text-[13px] text-neutro-700">{[c.ragione_sociale, c.responsabile && `Responsabile: ${c.responsabile}`].filter(Boolean).join(' · ')}</div>
-        </div>
-        <div className="flex-none text-right text-xs text-neutro-700">
-          <img src={logo} alt="Gruppo CEC Bigoli" className="mb-2 ml-auto h-11 w-[170px] object-cover" />
-          Situazione al {formattaDataOra(new Date().toISOString())}
-        </div>
-      </header>
+      <IntestazioneStampa kicker="Scheda tributi rateizzati" titolo={c.nome} titoloClasse="text-[34px]" spazioSotto="pb-4"
+        sotto={[c.ragione_sociale, c.responsabile && `Responsabile: ${c.responsabile}`].filter(Boolean).join(' · ')} />
 
       <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Box titolo="Debito residuo" t={r.residuo} nota={`${attivi_.length} piani attivi`} />
@@ -160,8 +150,7 @@ export default function StampaTributi() {
 
   return (
     <div className="min-h-screen bg-sfondo print:bg-white">
-      <div className="no-stampa sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-divisore bg-sfondo px-6 py-3">
-        <Link to="/tributi" className="btn btn-ghost no-underline"><ArrowLeft size={16} /> Torna ai tributi</Link>
+      <BarraStampa indietro="/tributi" etichetta="Torna ai tributi" disabilitata={scelti.length === 0}>
         <span className="text-[13px] text-neutro-700">
           {tipo === 'responsabile' ? `Responsabile ${nomeValore}: ${scelti.length} ${scelti.length === 1 ? 'ufficio' : 'uffici'} (uno per pagina)` : ''}
         </span>
@@ -169,8 +158,7 @@ export default function StampaTributi() {
         <select value={mesi} onChange={(e) => setMesi(Number(e.target.value))} className="input w-28">
           {[3, 6, 12].map((n) => <option key={n} value={n}>{n} mesi</option>)}
         </select>
-        <Bottone onClick={() => window.print()} disabled={scelti.length === 0}><Printer size={16} /> Stampa / salva PDF</Bottone>
-      </div>
+      </BarraStampa>
       {scelti.length === 0
         ? <div className="p-10">Nessun ufficio da stampare. <Link to="/tributi" className="underline">Torna ai tributi</Link></div>
         : scelti.map((c, i) => <SchedaUfficio key={c.id} c={c} pratiche={pratiche} mesi={mesi} prima={i === 0} />)}
@@ -180,8 +168,6 @@ export default function StampaTributi() {
 
 /* ---------------------------- scheda di una scadenza del calendario ---------------------------- */
 
-const GIORNI_LUNGHI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato']
-const MESI_LUNGHI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre']
 
 /** Stato di una voce in stampa (come nel calendario, in testo). */
 function statoVoce(x: VoceCalendario, oggi: string): { testo: string; rosso?: boolean; giallo?: boolean } {
@@ -214,8 +200,7 @@ export function StampaScadenzaTributi() {
 
   if (caricamento && voci.length === 0) return <div className="p-10"><Caricamento /></div>
 
-  const d = new Date(data + 'T00:00:00Z')
-  const titolo = /^\d{4}-\d{2}-\d{2}$/.test(data) ? `${GIORNI_LUNGHI[d.getUTCDay()]} ${d.getUTCDate()} ${MESI_LUNGHI[d.getUTCMonth()]} ${d.getUTCFullYear()}` : data
+  const titolo = dataEstesa(data)
   const tutte = totaliDi(voci.map((x) => x.rata))
   const daPagare = voci.filter((x) => !x.rata.pagata)
   const pagate = voci.filter((x) => x.rata.pagata)
@@ -226,25 +211,11 @@ export function StampaScadenzaTributi() {
 
   return (
     <div className="min-h-screen bg-sfondo print:bg-white">
-      <style>{'@media print { @page { size: A4 portrait; margin: 10mm; } }'}</style>
-      <div className="no-stampa sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-divisore bg-sfondo px-6 py-3">
-        <Link to={indietro} className="btn btn-ghost no-underline"><ArrowLeft size={16} /> Torna al calendario</Link>
-        <Bottone className="ml-auto" onClick={() => window.print()} disabled={voci.length === 0}><Printer size={16} /> Stampa / salva PDF</Bottone>
-      </div>
-      <div className="pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-8 text-sm md:px-10 print:my-0 print:px-0 print:py-0" style={{ printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }}>
-        <header className="flex items-start justify-between gap-6 border-b-2 border-testo pb-3">
-          <div className="min-w-0">
-            <div className="kicker">Tributi rateizzati · scadenza</div>
-            <h1 className="mt-1 text-[30px] first-letter:uppercase">{titolo}</h1>
-            <div className="mt-1 text-[13px] text-neutro-700">
-              {[`${voci.length} ${voci.length === 1 ? 'rata' : 'rate'} di ${uffici.length} ${uffici.length === 1 ? 'ufficio' : 'uffici'}`, responsabile && `Responsabile: ${responsabile}`, societa && cDi(societa)?.nome].filter(Boolean).join(' · ')}
-            </div>
-          </div>
-          <div className="flex-none text-right text-xs text-neutro-700">
-            <img src={logo} alt="Gruppo CEC Bigoli" className="mb-2 ml-auto h-11 w-[170px] object-cover" />
-            Situazione al {formattaDataOra(new Date().toISOString())}
-          </div>
-        </header>
+      <StileA4Verticale />
+      <BarraStampa indietro={indietro} etichetta="Torna al calendario" disabilitata={voci.length === 0} />
+      <div className="pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-8 text-sm md:px-10 print:my-0 print:px-0 print:py-0" style={COLORI_STAMPA}>
+        <IntestazioneStampa kicker="Tributi rateizzati · scadenza" titolo={titolo} titoloClasse="text-[30px] first-letter:uppercase"
+          sotto={[`${voci.length} ${voci.length === 1 ? 'rata' : 'rate'} di ${uffici.length} ${uffici.length === 1 ? 'ufficio' : 'uffici'}`, responsabile && `Responsabile: ${responsabile}`, societa && cDi(societa)?.nome].filter(Boolean).join(' · ')} />
 
         {voci.length === 0 ? <p className="mt-6">Nessuna rata in questa data.</p> : <>
           <div className="mt-4 grid grid-cols-3 gap-2">
@@ -270,7 +241,7 @@ export function StampaScadenzaTributi() {
                   {mie.map((x, k) => {
                     const st = statoVoce(x, oggi)
                     return (
-                      <tr key={`${x.pratica.id}-${x.rata.numero}${x.recupero ? '-r' : ''}`} className={`${k > 0 ? 'border-t border-riga' : ''} ${x.recupero && !x.rata.pagata ? 'bg-att-fondo' : ''}`}>
+                      <tr key={`${x.pratica.id}-${x.rata.numero}-${x.rata.scadenza}${x.recupero ? '-r' : ''}`} className={`${k > 0 ? 'border-t border-riga' : ''} ${x.recupero && !x.rata.pagata ? 'bg-att-fondo' : ''}`}>
                         <td className={`${cella} align-top`}>{k === 0 && <><b className="text-[12.5px]">{c?.nome ?? '—'}</b>{c?.responsabile && <div className="text-[10.5px] text-neutro-700">{c.responsabile}</div>}</>}</td>
                         <td className={cella}>{x.pratica.tributo}</td>
                         <td className={`${cella} whitespace-nowrap`}>{x.recupero ? `Recupero ${x.rata.numero}/${x.pratica.rate.length} del ${formattaData(x.rata.scadenza)}` : `${x.rata.numero}/${x.pratica.rate.length}`}</td>

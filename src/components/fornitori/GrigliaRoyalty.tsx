@@ -4,28 +4,27 @@
  * le mensilità precedenti restano con l'importo di allora. Ogni casella è una mensilità: pagata, da pagare (fino alla
  * fine del mese) o insoluta; clic per segnarla pagata. "×" toglie un ufficio che non paga la royalty, "Aggiungi ufficio" lo rimette.
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Check, Pencil, Printer, X } from 'lucide-react'
 import { useSessioneAttiva } from '../../lib/sessione'
 import { aggiorna, campiModifica } from '../../lib/store'
 import type { Contribuente, FatturaFornitore, TariffaRoyalty } from '../../lib/tipi'
 import {
-  FORNITORI_ROYALTY, fineMese, mensilita, nuovaFattura, scomponiTotale, pagaRoyalty, storicoTariffe, studioInFornitori, tariffaDel, totaliTariffa, type Mensilita, type StatoFattura,
+  FORNITORI_ROYALTY, fineMese, mensilita, raggruppaPerStudio, registraMensilita, scomponiTotale, pagaRoyalty, storicoTariffe, studioInFornitori, tariffaDel, totaliTariffa, type Mensilita, type StatoFattura,
 } from '../../lib/fornitori'
-import { analizzaEuro, formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
+import { analizzaEuro, centesimiInTesto, formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
 import { useSoloLettura } from '../SoloLettura'
-import { Avviso, Bottone, Finestra, Riquadro, Segmentato } from '../ui'
+import { Avviso, Bottone, Finestra, Riquadro, Segmentato, useModificheNonSalvate } from '../ui'
+import { MESI_BREVI as MESI, meseLungo } from '../../lib/utils/date'
+import FiltroUffici from '../FiltroUffici'
 
-const MESI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
-const MESI_LUNGHI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre']
-const meseLungo = (m: string) => `${MESI_LUNGHI[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`
 const STILE: Record<StatoFattura, { classe: string; segno: string; testo: string }> = {
   pagata: { classe: 'bg-ok-fondo text-ok-testo border-ok-bordo', segno: '✓', testo: 'Pagata' },
   da_pagare: { classe: 'bg-accento-100 text-accento-800 border-accento', segno: '•', testo: 'Da pagare' },
   insoluta: { classe: 'bg-err-fondo text-err-testo border-err-bordo font-semibold', segno: '!', testo: 'Insoluta' },
 }
-const centInTesto = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2).replace('.', ','))
+const centInTesto = centesimiInTesto
 
 export default function GrigliaRoyalty({ studi: tuttiStudi, fatture }: { studi: Contribuente[]; fatture: FatturaFornitore[] }) {
   const { token, nome } = useSessioneAttiva()
@@ -42,14 +41,21 @@ export default function GrigliaRoyalty({ studi: tuttiStudi, fatture }: { studi: 
   const [ufficio, setUfficio] = useState(parametri.get('ufficio') ?? '')
   const [importo, setImporto] = useState<{ id: string; totale: string; iva: string; dal: string } | null>(null)
   const [aperta, setAperta] = useState<{ s: Contribuente; mese: string } | null>(null)
+  const perStudio = useMemo(() => raggruppaPerStudio(fatture), [fatture])
 
   const inSezione = tuttiStudi.filter(studioInFornitori)
   const conRoyalty = inSezione.filter((s) => pagaRoyalty(s, fornitore))
-  const responsabili = [...new Set(conRoyalty.map((s) => s.responsabile).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'it'))
   const studi = conRoyalty.filter((s) => (!responsabile || s.responsabile === responsabile) && (!ufficio || s.id === ufficio))
   const esclusi = inSezione.filter((s) => !pagaRoyalty(s, fornitore))
   const mese = (m: number) => `${anno}-${String(m + 1).padStart(2, '0')}`
-  const mens = (s: Contribuente, m: string): Mensilita => mensilita(s, fornitore, m, fatture, oggi)
+  // Ogni mensilità si calcola una sola volta per aggiornamento dello schermo, guardando solo le fatture del suo studio
+  const calcolate = new Map<string, Mensilita>()
+  const mens = (s: Contribuente, m: string): Mensilita => {
+    const k = `${s.id}|${m}`
+    let x = calcolate.get(k)
+    if (!x) { x = mensilita(s, fornitore, m, perStudio.get(s.id) ?? [], oggi); calcolate.set(k, x) }
+    return x
+  }
   const insolutoStudio = (s: Contribuente) => MESI.reduce((t, _, i) => { const x = mens(s, mese(i)); return t + (x.stato === 'insoluta' ? x.importo_cent ?? 0 : 0) }, 0)
   const insolutoTot = studi.reduce((t, s) => t + insolutoStudio(s), 0)
   // Importo mostrato nella riga: quello in vigore oggi (o a dicembre, per gli anni passati)
@@ -92,14 +98,7 @@ export default function GrigliaRoyalty({ studi: tuttiStudi, fatture }: { studi: 
         <select value={anno} onChange={(e) => setAnno(Number(e.target.value))} className="input w-auto">
           {[...new Set([...anni, Number(oggi.slice(0, 4)) + 1])].sort((a, b) => b - a).map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
-        <select value={responsabile} onChange={(e) => { setResponsabile(e.target.value); setUfficio('') }} className="input w-auto">
-          <option value="">Tutti i responsabili</option>
-          {responsabili.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select value={ufficio} onChange={(e) => setUfficio(e.target.value)} className="input w-auto">
-          <option value="">Tutti gli uffici</option>
-          {conRoyalty.filter((s) => !responsabile || s.responsabile === responsabile).map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
-        </select>
+        <FiltroUffici uffici={conRoyalty} responsabile={responsabile} ufficio={ufficio} onResponsabile={setResponsabile} onUfficio={setUfficio} />
         {!soloLettura && esclusi.length > 0 && (
           <select value="" onChange={(e) => { const s = esclusi.find((x) => x.id === e.target.value); if (s) impostaRoyalty(s, true) }} className="input w-auto">
             <option value="">+ Aggiungi ufficio ({esclusi.length})</option>
@@ -215,13 +214,13 @@ function ModuloMensilita({ s, fornitore, mese, fatture, onChiudi }: { s: Contrib
   const [data, setData] = useState(esistente?.pagata_il || oggi)
   const [errore, setErrore] = useState<string | null>(null)
   const [inCorso, setInCorso] = useState(false)
+  const [toccato, setToccato] = useState(false)
+  const esci = useModificheNonSalvate(toccato)
   const t = x.tariffa
 
   /** Registrazione della mensilità (fattura royalty con competenza): l'importo resta quello di questo mese. */
-  const record = (m: string, base: FatturaFornitore | undefined, campi: Partial<FatturaFornitore>): FatturaFornitore => ({
-    ...(base ?? nuovaFattura(nome, { contribuente_id: s.id, fornitore, tipologia: 'royalty', competenza: m, scadenza: fineMese(m) })),
-    ...campi, modificato_il: new Date().toISOString(), modificato_da: nome,
-  })
+  const record = (m: string, base: FatturaFornitore | undefined, campi: Partial<FatturaFornitore>): FatturaFornitore =>
+    registraMensilita(nome, { contribuente_id: s.id, fornitore, competenza: m }, base, campi)
 
   async function salva(nuove: FatturaFornitore[], azione: string) {
     setErrore(null); setInCorso(true)
@@ -267,7 +266,7 @@ function ModuloMensilita({ s, fornitore, mese, fatture, onChiudi }: { s: Contrib
   }
 
   return (
-    <div className="flex flex-col gap-4 text-sm">
+    <div className="flex flex-col gap-4 text-sm" onChangeCapture={() => setToccato(true)}>
       {t && <p className="text-neutro-700">Importo mensile in vigore: {formattaEuro(t.imponibile_cent)} + IVA {t.iva_percento}% = <b>{formattaEuro(totaliTariffa(t).totale_cent)}</b> (dal {t.dal.slice(5)}/{t.dal.slice(0, 4)}).</p>}
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         <label className="block"><span className="etichetta-campo">Importo di questo mese</span>
@@ -293,7 +292,7 @@ function ModuloMensilita({ s, fornitore, mese, fatture, onChiudi }: { s: Contrib
           {esistente && <Bottone variante="ghost" disabled={inCorso} onClick={annulla} title="Torna all'importo mensile in vigore, non pagata">Annulla registrazione</Bottone>}
         </span>
         <span className="flex gap-2">
-          <Bottone variante="secondario" onClick={onChiudi}>Annulla</Bottone>
+          <Bottone variante="secondario" onClick={() => esci(onChiudi)}>Annulla</Bottone>
           <Bottone disabled={inCorso} onClick={salvaQuesta}>{inCorso ? 'Salvataggio…' : 'Salva'}</Bottone>
         </span>
       </div>

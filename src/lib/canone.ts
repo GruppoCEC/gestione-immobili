@@ -5,6 +5,7 @@
 import type { Annualita, Contratto, Movimento } from './tipi'
 import { statoIva } from './tipi'
 import { formattaEuro } from './utils/formato'
+import { giorniDelMese } from './utils/date'
 
 export interface CanoneMese {
   imponibile_cent: number | null
@@ -22,9 +23,21 @@ export function giornoScadenzaDi(c: Pick<Contratto, 'giorno_scadenza'>): number 
   return c.giorno_scadenza && c.giorno_scadenza >= 1 && c.giorno_scadenza <= 31 ? c.giorno_scadenza : GIORNO_SCADENZA_PREDEFINITO
 }
 
-/** Data di scadenza del canone di un mese "AAAA-MM" → "AAAA-MM-GG". */
+/** Data di scadenza del canone di un mese "AAAA-MM" → "AAAA-MM-GG" (giorno 31 a febbraio = ultimo giorno del mese). */
 export function scadenzaCanone(c: Pick<Contratto, 'giorno_scadenza'>, mese: string): string {
-  return `${mese}-${String(giornoScadenzaDi(c)).padStart(2, '0')}`
+  const [a, m] = mese.split('-').map(Number)
+  const ultimo = giorniDelMese(a, m)
+  return `${mese}-${String(Math.min(giornoScadenzaDi(c), ultimo)).padStart(2, '0')}`
+}
+
+/**
+ * Vero se il contratto va mostrato nella griglia dei canoni dell'anno: i contratti attivi e quelli cessati in
+ * quell'anno o dopo (così gli ultimi canoni non incassati di un conduttore uscito restano visibili e nei totali).
+ * Un contratto cessato senza data di cessazione non compare.
+ */
+export function inGrigliaAnno(c: Pick<Contratto, 'stato' | 'data_cessazione'>, anno: number): boolean {
+  if (c.stato !== 'cessato') return true
+  return !!c.data_cessazione && Number(c.data_cessazione.slice(0, 4)) >= anno
 }
 
 /** Vero se il canone del mese è già scaduto alla data indicata (AAAA-MM-GG). */

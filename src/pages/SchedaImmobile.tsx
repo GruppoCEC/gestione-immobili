@@ -5,9 +5,7 @@
  */
 import { Fragment, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Printer } from 'lucide-react'
-import { Bottone, Caricamento } from '../components/ui'
-import logo from '../assets/logo-gruppo.png'
+import { Caricamento } from '../components/ui'
 import { canoneMensilePer, canoneScaduto, descriviCanone, totaliAnnoContratto } from '../lib/canone'
 import { attivi } from '../lib/store'
 import {
@@ -15,9 +13,10 @@ import {
   type Allegato, type Annualita, type Condominio, type Conduttore, type Contratto, type Immobile, type Movimento, type PianoRientro, type Societa, type VoceCondominiale,
 } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { formattaData, formattaDataOra, formattaEuro } from '../lib/utils/formato'
+import { formattaData, formattaDataOra, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { MESI_BREVI as MESI } from '../lib/utils/date'
+import { BarraStampa, IntestazioneStampa } from '../components/stampa'
 
-const MESI = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
 
 function Sezione({ titolo, children, compatta }: { titolo: string; children: React.ReactNode; compatta?: boolean }) {
   return (
@@ -51,7 +50,7 @@ export default function SchedaImmobile() {
   const { id } = useParams()
   const { dati, caricamento } = useCollezioni(['immobili', 'societa', 'condomini', 'contratti', 'conduttori', 'annualita', 'movimenti', 'voci_condominiali', 'piani_rientro', 'allegati'])
   const [anno, setAnno] = useState(new Date().getFullYear())
-  const oggi = new Date().toISOString().slice(0, 10)
+  const oggi = oggiIso()
 
   const imm = attivi(dati<Immobile>('immobili')).find((i) => i.id === id)
   if (caricamento && !imm) return <div className="p-10"><Caricamento /></div>
@@ -86,25 +85,15 @@ export default function SchedaImmobile() {
 
   return (
     <div className="min-h-screen bg-sfondo print:bg-white">
-      <div className="no-stampa sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-divisore bg-sfondo px-6 py-3">
-        <Link to="/immobili" className="btn btn-ghost no-underline"><ArrowLeft size={16} /> Torna agli immobili</Link>
+      <BarraStampa indietro="/immobili" etichetta="Torna agli immobili">
         <span className="ml-auto text-[13px] text-neutro-700">Anno canoni:</span>
         <select value={anno} onChange={(e) => setAnno(Number(e.target.value))} className="input w-24">{[anno - 2, anno - 1, anno, anno + 1].map((a) => <option key={a} value={a}>{a}</option>)}</select>
-        <Bottone onClick={() => window.print()}><Printer size={16} /> Stampa / salva PDF</Bottone>
-      </div>
+      </BarraStampa>
 
       <div className="pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-10 text-sm md:px-[60px] md:py-14 print:my-0">
-        <header className="flex items-start justify-between gap-6 border-b-2 border-testo pb-5">
-          <div className="min-w-0">
-            <div className="kicker">Scheda immobile · {soc?.ragione_sociale ?? '—'}</div>
-            <h1 className="mt-1 text-[36px]">{imm.indirizzo}</h1>
-            <div className="mt-1 text-sm text-neutro-700">{[[imm.comune, imm.provincia].filter(Boolean).join(' '), etichettaDi(TIPOLOGIE_IMMOBILE, imm.tipologia), imm.superficie_mq ? `${imm.superficie_mq} mq` : ''].filter(Boolean).join(' · ')}</div>
-          </div>
-          <div className="flex-none text-right text-xs text-neutro-700">
-            <img src={logo} alt="Gruppo CEC Bigoli" className="mb-2 ml-auto h-11 w-[170px] object-cover" />
-            Stampata il {formattaDataOra(new Date().toISOString())}
-          </div>
-        </header>
+        <IntestazioneStampa kicker={`Scheda immobile · ${soc?.ragione_sociale ?? '—'}`} titolo={imm.indirizzo} titoloClasse="text-[36px]" spazioSotto="pb-5"
+          sottoClasse="mt-1 text-sm" etichettaData="Stampata il"
+          sotto={[[imm.comune, imm.provincia].filter(Boolean).join(' '), etichettaDi(TIPOLOGIE_IMMOBILE, imm.tipologia), imm.superficie_mq ? `${imm.superficie_mq} mq` : ''].filter(Boolean).join(' · ')} />
 
         {/* Riquadro situazione */}
         <div className="mt-5 grid gap-2 text-xs sm:grid-cols-4">

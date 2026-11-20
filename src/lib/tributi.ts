@@ -1,7 +1,7 @@
 /** Calcoli comuni della sezione Tributi rateizzati (totali, pagato, residuo, rate scadute). Importi in centesimi. */
 import type { Contribuente, PraticaTributo, RataTributo } from './tipi'
 import { aggiorna, campiModifica } from './store'
-import { oggiIso } from './utils/formato'
+import { formattaEuro, oggiIso } from './utils/formato'
 
 export interface Totali {
   quota_capitale_cent: number
@@ -98,6 +98,15 @@ export const daInserire = (p: PraticaTributo) => p.stato === 'rate_concordate' &
 export const gestita = (p: PraticaTributo) => p.tipo !== 'segnalazione_iva' && !['da_decidere', 'richiesta_inviata'].includes(p.stato)
 
 /** Nome da mostrare per il contribuente. */
+/** Responsabili degli uffici, senza doppioni, in ordine alfabetico. */
+export function responsabiliDi(uffici: Array<Pick<Contribuente, 'responsabile'>>): string[] {
+  return [...new Set(uffici.map((c) => c.responsabile).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'it'))
+}
+
+/** "Cap. 1.000,00 € · Sanz. 100,00 € · Int. 12,00 €" (scomposizione compatta di un totale) */
+export const scomposizioneBreve = (t: Totali) =>
+  `Cap. ${formattaEuro(t.quota_capitale_cent)} · Sanz. ${formattaEuro(t.sanzioni_cent)} · Int. ${formattaEuro(t.interessi_cent)}`
+
 export function nomeContribuente(elenco: Contribuente[], id: string): string {
   return elenco.find((c) => c.id === id)?.nome ?? '—'
 }

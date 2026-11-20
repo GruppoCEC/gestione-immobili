@@ -1,29 +1,34 @@
+import { lazy, Suspense, type ReactNode } from 'react'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { FornitoreSessione, useSessione, useUtente } from './lib/sessione'
 import { ContestoSoloLettura } from './components/SoloLettura'
 import { primoPercorso, puoModificare, puoVedere, type Sezione } from './lib/permessi'
-import type { ReactNode } from 'react'
+import { Caricamento } from './components/ui'
 import Layout from './components/Layout'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Impostazioni from './pages/Impostazioni'
-import PaginaSocieta from './pages/Societa'
-import PaginaImmobili from './pages/Immobili'
-import PaginaConduttori from './pages/Conduttori'
-import PaginaCondomini from './pages/Condomini'
-import PaginaContratti from './pages/Contratti'
-import PaginaImporta from './pages/Importa'
-import PaginaStorico from './pages/Storico'
-import PaginaRegistro from './pages/Registro'
-import PaginaCanoni from './pages/Canoni'
-import PaginaCondominio from './pages/Condominio'
-import SchedaImmobile from './pages/SchedaImmobile'
-import PaginaComunicazioni from './pages/Comunicazioni'
-import PaginaTributi from './pages/Tributi'
-import PaginaFornitori from './pages/Fornitori'
-import { StampaLetteraIstat } from './pages/StampaDocumenti'
-import StampaTributi, { StampaScadenzaTributi } from './pages/StampaTributi'
-import { StampaFattureFornitori, StampaRoyalty } from './pages/StampaFornitori'
+
+// Le pagine si scaricano solo quando si aprono (la prima volta): l'apertura del sito è più veloce
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Impostazioni = lazy(() => import('./pages/Impostazioni'))
+const PaginaSocieta = lazy(() => import('./pages/Societa'))
+const PaginaImmobili = lazy(() => import('./pages/Immobili'))
+const PaginaConduttori = lazy(() => import('./pages/Conduttori'))
+const PaginaCondomini = lazy(() => import('./pages/Condomini'))
+const PaginaContratti = lazy(() => import('./pages/Contratti'))
+const PaginaImporta = lazy(() => import('./pages/Importa'))
+const PaginaStorico = lazy(() => import('./pages/Storico'))
+const PaginaRegistro = lazy(() => import('./pages/Registro'))
+const PaginaCanoni = lazy(() => import('./pages/Canoni'))
+const PaginaCondominio = lazy(() => import('./pages/Condominio'))
+const SchedaImmobile = lazy(() => import('./pages/SchedaImmobile'))
+const PaginaComunicazioni = lazy(() => import('./pages/Comunicazioni'))
+const PaginaTributi = lazy(() => import('./pages/Tributi'))
+const PaginaFornitori = lazy(() => import('./pages/Fornitori'))
+const StampaLetteraIstat = lazy(() => import('./pages/StampaDocumenti').then((m) => ({ default: m.StampaLetteraIstat })))
+const StampaTributi = lazy(() => import('./pages/StampaTributi'))
+const StampaScadenzaTributi = lazy(() => import('./pages/StampaTributi').then((m) => ({ default: m.StampaScadenzaTributi })))
+const StampaFattureFornitori = lazy(() => import('./pages/StampaFornitori').then((m) => ({ default: m.StampaFattureFornitori })))
+const StampaRoyalty = lazy(() => import('./pages/StampaFornitori').then((m) => ({ default: m.StampaRoyalty })))
 
 /** Mostra le pagine interne solo se l'utente ha effettuato l'accesso. */
 function AreaProtetta() {
@@ -46,7 +51,11 @@ function AreaProtetta() {
 function Guardia({ sezione, children }: { sezione: Sezione; children: ReactNode }) {
   const utente = useUtente()
   if (!puoVedere(utente, sezione)) return <Navigate to={primoPercorso(utente)} replace />
-  return <ContestoSoloLettura.Provider value={!puoModificare(utente, sezione)}>{children}</ContestoSoloLettura.Provider>
+  return (
+    <ContestoSoloLettura.Provider value={!puoModificare(utente, sezione)}>
+      <Suspense fallback={<Caricamento />}>{children}</Suspense>
+    </ContestoSoloLettura.Provider>
+  )
 }
 
 function AreaConMenu() {

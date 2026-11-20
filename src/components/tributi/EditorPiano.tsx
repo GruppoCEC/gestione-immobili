@@ -8,48 +8,24 @@
  */
 import { useRef, useState } from 'react'
 import { FileUp, Plus, Trash2 } from 'lucide-react'
-import { normalizzaNome, vuotaPratica, vuotoContribuente } from '../../lib/importaTributi'
+import { contribuenteNelTesto, normalizzaNome, vuotaPratica, vuotoContribuente } from '../../lib/importaTributi'
 import { leggiPdfRateizzo, type PianoPdf } from '../../lib/pdfRateizzo'
 import { calcolaRate, decorrenzaDaElaborazione, dividiQuota, rateDaPdf } from '../../lib/rateTributi'
 import { useSessioneAttiva } from '../../lib/sessione'
 import { aggiorna, campiModifica } from '../../lib/store'
 import { TIPI_PRATICA, etichettaDi, type Contribuente, type PraticaTributo, type RataTributo } from '../../lib/tipi'
 import { aggiungiGiorni } from '../../lib/ravvedimento'
-import { analizzaEuro, formattaData, formattaEuro } from '../../lib/utils/formato'
-import { Avviso, Bottone, Segmentato } from '../ui'
+import { formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
+import { Avviso, Bottone, InputEuro, Segmentato, useModificheNonSalvate } from '../ui'
 
 const NUOVA = '__nuova'
 const FORME_GIURIDICHE = new Set(['srl', 'srls', 'spa', 'sas', 'snc', 'sapa', 'scarl', 'ss'])
 
-/** "STUDIO SOMALIA LIBIA SRL" → "Studio Somalia Libia SRL" */
+/** "STUDIO ESEMPIO SRL" → "Studio Esempio SRL" */
 const nomeLeggibile = (s: string) => s.toLowerCase().split(/\s+/).map((w) => (FORME_GIURIDICHE.has(w.replace(/\./g, '')) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join(' ')
 
-/** Contribuente il cui nome (o ragione sociale o alias) compare come parole intere nel testo; il più lungo vince. */
-function trovaPerNome(testo: string, contribuenti: Contribuente[]): Contribuente | null {
-  const t = ' ' + normalizzaNome(testo) + ' '
-  let migliore: { c: Contribuente; l: number } | null = null
-  let pari = false
-  for (const c of contribuenti) {
-    for (const n of [c.nome, c.ragione_sociale, ...(c.alias ?? [])]) {
-      const k = normalizzaNome(n)
-      if (k.length < 3 || !t.includes(' ' + k + ' ')) continue
-      if (!migliore || k.length > migliore.l) { migliore = { c, l: k.length }; pari = false }
-      else if (k.length === migliore.l && migliore.c.id !== c.id) pari = true
-    }
-  }
-  return migliore && !pari ? migliore.c : null
-}
+const trovaPerNome = contribuenteNelTesto
 
-/** Campo importo: mostra euro, salva centesimi mentre si scrive. */
-function InputEuro({ valore, onChange, className = '' }: { valore: number | null; onChange: (c: number | null) => void; className?: string }) {
-  const [testo, setTesto] = useState<string | null>(null)
-  const mostrato = testo ?? (valore === null ? '' : (valore / 100).toFixed(2).replace('.', ','))
-  return (
-    <input value={mostrato} inputMode="decimal" className={`input num text-right ${className}`}
-      onFocus={() => setTesto(mostrato)} onChange={(e) => { setTesto(e.target.value); onChange(analizzaEuro(e.target.value)) }}
-      onBlur={() => setTesto(null)} />
-  )
-}
 
 const Campo = ({ etichetta, children, aiuto, largo }: { etichetta: string; children: React.ReactNode; aiuto?: string; largo?: boolean }) => (
   <label className={`block ${largo ? 'sm:col-span-2' : ''}`}>
@@ -72,6 +48,9 @@ interface Props {
 }
 
 export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche, contribuenteIniziale, tipoIniziale, tributoIniziale, notaIniziale, onChiudi, onSalvato }: Props) {
+  // Qualsiasi cosa scritta nel modulo (o un PDF caricato) conta come modifica non salvata: chiudendo si chiede conferma
+  const [toccato, setToccato] = useState(false)
+  const esci = useModificheNonSalvate(toccato)
   const { token, nome } = useSessioneAttiva()
   const [base, setBase] = useState<PraticaTributo | null>(baseIniziale)
   const [contribuenteId, setContribuenteId] = useState(baseIniziale?.contribuente_id ?? contribuenteIniziale ?? '')
@@ -164,6 +143,8 @@ export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche
       if (k !== i) return r
       const n = { ...r, [campo]: valore } as RataTributo
       n.totale_cent = n.quota_capitale_cent + n.sanzioni_cent + n.interessi_cent
+      // Spuntando "Pagata" si registra anche la data (oggi, se non c'era); togliendo la spunta si cancella
+      if (campo === 'pagata') n.pagata_il = valore ? (r.pagata_il || oggiIso()) : ''
       return n
     }))
   }
@@ -214,7 +195,7 @@ export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche
   }
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-7" onChangeCapture={() => setToccato(true)}>
       {/* 1. PDF */}
       <section>
         <h6 className="mb-3 text-accento-700">1. Piano dell'Agenzia in PDF (facoltativo)</h6>
@@ -356,7 +337,7 @@ export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche
           {base ? `Aggiorna la pratica esistente (${etichettaDi(TIPI_PRATICA, base.tipo).toLowerCase()} di ${nomeDi(base.contribuente_id)}).` : 'Crea una nuova pratica.'}
         </span>
         <div className="flex gap-2.5">
-          <Bottone type="button" variante="secondario" onClick={onChiudi}>Annulla</Bottone>
+          <Bottone type="button" variante="secondario" onClick={() => esci(onChiudi)}>Annulla</Bottone>
           <Bottone type="button" disabled={!!inCorso} onClick={salva}>{inCorso && inCorso !== 'Lettura del PDF…' ? inCorso : 'Salva piano'}</Bottone>
         </div>
       </div>

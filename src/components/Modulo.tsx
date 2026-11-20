@@ -4,8 +4,8 @@
  */
 import { useState, type FormEvent } from 'react'
 import type { Opzione } from '../lib/tipi'
-import { analizzaEuro, formattaEuro } from '../lib/utils/formato'
-import { Avviso, Bottone, Segmentato } from './ui'
+import { analizzaEuro, centesimiInTesto, formattaEuro } from '../lib/utils/formato'
+import { Avviso, Bottone, Segmentato, useModificheNonSalvate } from './ui'
 import { useSoloLettura } from './SoloLettura'
 
 export type TipoCampo = 'testo' | 'textarea' | 'numero' | 'euro' | 'data' | 'select' | 'percentuale' | 'multiselect'
@@ -39,12 +39,12 @@ interface Props<T> {
 }
 
 function CampoEuro({ valore, onChange, disabilitato }: { valore: number | null; onChange: (c: number | null) => void; disabilitato?: boolean }) {
-  const [testo, setTesto] = useState(valore === null || valore === undefined ? '' : (valore / 100).toFixed(2).replace('.', ','))
+  const [testo, setTesto] = useState(centesimiInTesto(valore))
   const [fuoco, setFuoco] = useState(false)
   const mostrato = fuoco ? testo : (valore === null || valore === undefined ? '' : formattaEuro(valore))
   return (
     <input value={mostrato} disabled={disabilitato} inputMode="decimal"
-      onFocus={() => { setFuoco(true); setTesto(valore === null || valore === undefined ? '' : (valore / 100).toFixed(2).replace('.', ',')) }}
+      onFocus={() => { setFuoco(true); setTesto(centesimiInTesto(valore)) }}
       onChange={(e) => { setTesto(e.target.value); onChange(analizzaEuro(e.target.value)) }}
       onBlur={() => setFuoco(false)}
       className="input num text-right" />
@@ -72,6 +72,9 @@ export default function Modulo<T>({ campi, iniziale, onSalva, onAnnulla, onElimi
   const [inCorso, setInCorso] = useState(false)
   const [confermaElimina, setConfermaElimina] = useState(false)
   const soloLettura = useSoloLettura()
+  // Valori al momento dell'apertura (o dell'ultimo salvataggio): servono a capire se ci sono modifiche non salvate
+  const [salvati, setSalvati] = useState(() => JSON.stringify(iniziale))
+  const esci = useModificheNonSalvate(!soloLettura && JSON.stringify(valori) !== salvati)
 
   function imposta(nome: string, v: unknown) {
     setValori((prec) => {
@@ -87,7 +90,7 @@ export default function Modulo<T>({ campi, iniziale, onSalva, onAnnulla, onElimi
       if (c.obbligatorio && (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0))) { setErrore(`Il campo "${c.etichetta}" è obbligatorio.`); return }
     }
     setErrore(null); setInCorso(true)
-    try { await onSalva(valori as Partial<T>) } catch (err) { setErrore((err as Error).message) } finally { setInCorso(false) }
+    try { await onSalva(valori as Partial<T>); setSalvati(JSON.stringify(valori)) } catch (err) { setErrore((err as Error).message) } finally { setInCorso(false) }
   }
 
   async function elimina() {
@@ -185,7 +188,7 @@ export default function Modulo<T>({ campi, iniziale, onSalva, onAnnulla, onElimi
           {(soloLettura || !onElimina) && 'Ogni modifica viene registrata con il nome di chi la fa.'}
         </div>
         <div className="flex gap-2.5">
-          <Bottone type="button" variante="secondario" onClick={onAnnulla}>{soloLettura ? 'Chiudi' : 'Annulla'}</Bottone>
+          <Bottone type="button" variante="secondario" onClick={() => esci(onAnnulla)}>{soloLettura ? 'Chiudi' : 'Annulla'}</Bottone>
           {!soloLettura && <Bottone type="submit" disabled={inCorso}>{inCorso ? 'Salvataggio…' : etichettaSalva}</Bottone>}
         </div>
       </div>

@@ -1,6 +1,6 @@
 /** Calcoli della sezione Fornitori: stato delle fatture, totali, mensilità delle royalty. Importi in centesimi. */
 import type { Contribuente, FatturaFornitore, TariffaRoyalty } from './tipi'
-import { aggiungiGiorni } from './ravvedimento'
+import { aggiungiGiorni, fineMese, meseDopo } from './utils/date'
 import { oggiIso } from './utils/formato'
 import { campiNuovo } from './store'
 
@@ -55,6 +55,17 @@ export function nuovaFattura(nome: string, base: Partial<FatturaFornitore> = {})
   }
 }
 
+/**
+ * Registrazione di una mensilità di royalty (fattura con mensilità di competenza, scadenza a fine mese): aggiorna quella
+ * già registrata (`esistente`) oppure ne crea una nuova. Usata dalla griglia Royalty e dalla tabella degli uffici.
+ */
+export function registraMensilita(
+  nome: string, m: { contribuente_id: string; fornitore: string; competenza: string },
+  esistente: FatturaFornitore | undefined, campi: Partial<FatturaFornitore>,
+): FatturaFornitore {
+  const base = esistente ?? nuovaFattura(nome, { contribuente_id: m.contribuente_id, fornitore: m.fornitore, tipologia: 'royalty', competenza: m.competenza, scadenza: fineMese(m.competenza) })
+  return { ...base, ...campi, modificato_il: new Date().toISOString(), modificato_da: nome }
+}
 
 /** Studi mostrati nella sezione Fornitori (non rimossi). */
 export const studioInFornitori = (c: Contribuente) => !c.fornitori_rimosso
@@ -87,12 +98,8 @@ export function tariffaDel(c: Contribuente, fornitore: string, mese: string): Ta
   return storicoTariffe(c, fornitore).filter((t) => t.dal <= mese).at(-1) ?? null
 }
 
-/** Ultimo giorno del mese AAAA-MM (scadenza della mensilità). */
-export function fineMese(mese: string): string {
-  const [a, m] = mese.split('-').map(Number)
-  const d = new Date(Date.UTC(a, m, 0))
-  return d.toISOString().slice(0, 10)
-}
+/** Ultimo giorno del mese AAAA-MM (scadenza della mensilità): da utils/date.ts. */
+export { fineMese }
 
 export interface Mensilita {
   stato: StatoFattura | null     // null: nessun importo impostato e nessuna fattura
@@ -143,7 +150,20 @@ export function royaltyDaRegistrare(c: Contribuente, fatture: FatturaFornitore[]
   return out
 }
 
-function meseDopo(m: string): string {
-  const [a, n] = m.split('-').map(Number)
-  return n === 12 ? `${a + 1}-01` : `${a}-${String(n + 1).padStart(2, '0')}`
+/**
+ * Fatture raggruppate per studio (una sola passata): le funzioni sulle mensilità guardano solo le fatture dello studio,
+ * così con centinaia di fatture non si scorre l'elenco intero per ogni ufficio e ogni mese.
+ */
+export function raggruppaPerStudio(fatture: FatturaFornitore[]): Map<string, FatturaFornitore[]> {
+  const m = new Map<string, FatturaFornitore[]>()
+  for (const f of fatture) { const l = m.get(f.contribuente_id); if (l) l.push(f); else m.set(f.contribuente_id, [f]) }
+  return m
 }
+
+/** Fatture registrate di uno studio più le mensilità di royalty non ancora registrate (calcolate dall'importo mensile). */
+export function fattureConRoyalty(c: Contribuente, perStudio: Map<string, FatturaFornitore[]>, oggi = oggiIso()): FatturaFornitore[] {
+  const proprie = perStudio.get(c.id) ?? []
+  return [...proprie, ...royaltyDaRegistrare(c, proprie, oggi)]
+}
+
+

@@ -4,23 +4,19 @@
  * La data (pagamento o lettera) arriva nell'indirizzo: ...?data=AAAA-MM-GG
  */
 import type { ReactNode } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Printer } from 'lucide-react'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useDatiDocumenti } from '../components/Documenti'
-import { Avviso, Bottone, Caricamento } from '../components/ui'
+import { Avviso, Caricamento } from '../components/ui'
 import logo from '../assets/logo-gruppo.png'
 import { preparaLetteraIstat } from '../lib/documenti'
 import { inCedolare } from '../lib/tipi'
 import { formattaData, oggiIso } from '../lib/utils/formato'
+import { BarraStampa } from '../components/stampa'
 
 function Foglio({ children }: { children: ReactNode }) {
-  const navigate = useNavigate()
   return (
     <div className="min-h-screen bg-sfondo print:bg-white">
-      <div className="no-stampa sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-divisore bg-sfondo px-6 py-3">
-        <button onClick={() => navigate(-1)} className="btn btn-ghost"><ArrowLeft size={16} /> Indietro</button>
-        <Bottone className="ml-auto" onClick={() => window.print()}><Printer size={16} /> Stampa / salva PDF</Bottone>
-      </div>
+      <BarraStampa />
       <div className="pagina-stampa ombra-md mx-auto my-8 max-w-[794px] bg-white px-6 py-10 text-sm md:px-[60px] md:py-14 print:my-0">{children}</div>
     </div>
   )

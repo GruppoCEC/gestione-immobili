@@ -14,10 +14,10 @@ import { useSessioneAttiva } from '../lib/sessione'
 import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
 import { A_CARICO, PERIODICITA_PIANO, SI_NO, STATI_PIANO, TIPI_VOCE_CONDOMINIO, etichettaDi, type Condominio, type Conduttore, type Contratto, type Immobile, type PianoRientro, type Societa, type VoceCondominiale } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
-import { aggiungiMesi, formattaData, formattaEuro } from '../lib/utils/formato'
+import { aggiungiMesi, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { aggiungiGiorni } from '../lib/utils/date'
 
 /** Aggiunge giorni a una data ISO */
-const aggiungiGiorni = (iso: string, giorni: number) => new Date(new Date(iso + 'T00:00:00Z').getTime() + giorni * 86_400_000).toISOString().slice(0, 10)
 
 const CATEGORIE = [
   { valore: 'bollettino', etichetta: 'Bollettino / avviso di pagamento' }, { valore: 'bilancio_condominiale', etichetta: 'Verbale assemblea / bilancio / riparto' },
@@ -111,7 +111,7 @@ export default function PaginaCondominio() {
   const totDaPagare = filtrate.filter((v) => v.pagata !== 'si').reduce((s, v) => s + (v.importo_cent ?? 0), 0)
   const totDaRiaddebitare = filtrate.filter((v) => (v.quota_conduttore_cent ?? 0) > 0 && v.riaddebitata !== 'si').reduce((s, v) => s + (v.quota_conduttore_cent ?? 0), 0)
   const sel = 'input w-auto'
-  const oggi = new Date().toISOString().slice(0, 10)
+  const oggi = oggiIso()
 
   // ---- Riepilogo per immobile ----
   interface Riepilogo { id: string; imm: Immobile; societa: string; condominio: Condominio | undefined; n: number; totale: number; pagato: number; daPagare: number; scaduto: number; inPiano: number; daRiaddebitare: number; piuVecchia: string; livello: 'ok' | 'attenzione' | 'critico' }
@@ -181,6 +181,9 @@ export default function PaginaCondominio() {
         if (inclusa && x.in_piano_id !== pianoId) return { ...x, in_piano_id: pianoId, ...campiModifica(nome) }
         if (!inclusa && x.in_piano_id === pianoId) return { ...x, in_piano_id: '', ...campiModifica(nome) }
         if (inclusa && concluso && x.pagata !== 'si') return { ...x, pagata: 'si', data_pagamento: x.data_pagamento || oggi, note: (x.note ? x.note + ' · ' : '') + 'Saldato tramite piano di rientro', ...campiModifica(nome) }
+        // Piano concluso: anche le sue rate ancora aperte risultano saldate, altrimenti lo stesso debito conterebbe due volte
+        // (nei bollettini, appena segnati pagati, e nelle rate del piano)
+        if (concluso && x.piano_id === pianoId && x.pagata !== 'si' && !x.eliminato_il) return { ...x, pagata: 'si', data_pagamento: x.data_pagamento || oggi, note: (x.note ? x.note + ' · ' : '') + 'Saldata con la conclusione del piano', ...campiModifica(nome) }
         return x
       })
       if (!esistente && n > 0) {

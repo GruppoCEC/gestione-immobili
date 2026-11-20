@@ -5,9 +5,9 @@
  *   Proprietà | Immobile | Conduttore | Affitto | Condominio | Mutuo/Leasing | Imposta Registro | IMU | (vuota) | Valore di Mercato | Rendimento
  * seguita da righe immobile e da una riga TOTALE. Conduttore "//" o vuoto = immobile libero.
  */
-import * as XLSX from 'xlsx'
 import type { Conduttore, Contratto, Immobile, Societa } from './tipi'
 import { campiNuovo } from './store'
+import { analizzaEuro } from './utils/formato'
 
 export interface RigaImportata {
   societa: string
@@ -22,18 +22,21 @@ export interface RisultatoAnalisi {
   avvisi: string[]
 }
 
-function centesimi(v: unknown): number {
+/** Importo di una cella: numero, oppure testo in formato italiano ("1.234,56") o inglese ("1,234.56"). */
+export function centesimi(v: unknown): number {
   if (typeof v === 'number') return Math.round(v * 100)
   if (typeof v === 'string') {
-    const p = v.replace(/[€\s]/g, '').replace(/,/g, '')
-    const n = Number(p)
-    return Number.isFinite(n) ? Math.round(n * 100) : 0
+    let p = v.replace(/[€\s]/g, '')
+    // Con entrambi i separatori il decimale è l'ultimo: "1,234.56" (inglese) → togli le virgole
+    if (p.includes(',') && p.includes('.') && p.lastIndexOf('.') > p.lastIndexOf(',')) p = p.replace(/,/g, '')
+    return analizzaEuro(p) ?? 0
   }
   return 0
 }
 
 /** Legge il file e restituisce le righe riconosciute (senza toccare i dati). */
-export function analizzaRendimentiAffitti(buffer: ArrayBuffer): RisultatoAnalisi {
+export async function analizzaRendimentiAffitti(buffer: ArrayBuffer): Promise<RisultatoAnalisi> {
+  const XLSX = await import('xlsx') // caricata solo quando serve
   const wb = XLSX.read(buffer, { type: 'array' })
   const ws = wb.Sheets[wb.SheetNames[0]]
   const righeRaw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' , raw: true })

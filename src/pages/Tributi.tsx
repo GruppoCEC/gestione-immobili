@@ -2,7 +2,7 @@
  * Tributi rateizzati: avvisi bonari, cartelle e rottamazioni delle società del gruppo, con i piani di rate,
  * lo stato dei pagamenti e il riepilogo per società.
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, Printer } from 'lucide-react'
 import Calendario from '../components/tributi/Calendario'
@@ -15,7 +15,7 @@ import { BarraPagato, EtichettaStato, Scomposizione } from '../components/tribut
 import SchedaPiano from '../components/tributi/SchedaPiano'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, Gruppo, IntestazionePagina, Segmentato, Tabella, TavolaKpi, Vuoto } from '../components/ui'
 import { TIPI_PRATICA, etichettaDi, type Contribuente, type PraticaTributo } from '../lib/tipi'
-import { daInserire, decaduto, trovaDoppioni, descriviPratica, gestita, inAttesaCartella, inCorso, residuoDecaduto, percentualePagata, riepilogoPratiche, riepilogoRate, statoEffettivo } from '../lib/tributi'
+import { daInserire, decaduto, responsabiliDi, scomposizioneBreve, trovaDoppioni, descriviPratica, gestita, inAttesaCartella, inCorso, residuoDecaduto, percentualePagata, riepilogoPratiche, riepilogoRate, statoEffettivo } from '../lib/tributi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { attivi } from '../lib/store'
 import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
@@ -34,8 +34,15 @@ export default function PaginaTributi() {
   const [editor, setEditor] = useState<{ base: PraticaTributo | null; contribuente?: string; tipo?: string; tributo?: string; nota?: string } | null>(null)
 
   const contribuenti = attivi(dati<Contribuente>('contribuenti')).sort((a, b) => a.nome.localeCompare(b.nome, 'it'))
-  const pratiche = attivi(dati<PraticaTributo>('pratiche_tributi')).filter(gestita)
+  // I calcoli pesanti si rifanno solo quando cambiano i dati, non a ogni tasto premuto nella ricerca
+  const tuttePratiche = dati<PraticaTributo>('pratiche_tributi')
+  const pratiche = useMemo(() => attivi(tuttePratiche).filter(gestita), [tuttePratiche])
   const oggi = oggiIso()
+  const nDoppioni = useMemo(() => trovaDoppioni(pratiche).length, [pratiche])
+  const riepilogoDi = useMemo(() => {
+    const m = new Map(pratiche.map((p) => [p.id, riepilogoRate(p.rate, oggi)]))
+    return (p: PraticaTributo) => m.get(p.id) ?? riepilogoRate(p.rate, oggi)
+  }, [pratiche, oggi])
   const tot = riepilogoPratiche(pratiche.filter(inCorso), oggi)
   const praticaAperta = pratiche.find((p) => p.id === aperta) ?? null
 
@@ -61,7 +68,7 @@ export default function PaginaTributi() {
   })
 
   const gruppi = contribuenti
-    .map((c) => ({ c, pratiche: filtrate.filter((p) => p.contribuente_id === c.id).sort((a, b) => (b.anno_rateizzo ?? 0) - (a.anno_rateizzo ?? 0) || a.tributo.localeCompare(b.tributo)) }))
+    .map((c) => ({ c, pratiche: filtrate.filter((p) => p.contribuente_id === c.id).sort((a, b) => (b.anno_rateizzo ?? 0) - (a.anno_rateizzo ?? 0) || a.tributo.localeCompare(b.tributo, 'it')) }))
     .filter((g) => g.pratiche.length > 0)
 
   const conteggio = (f: FiltroPiani) => pratiche.filter((p) =>
@@ -114,7 +121,7 @@ export default function PaginaTributi() {
                 </select>
                 <BarraRicerca valore={ricerca} onChange={setRicerca} segnaposto="Cerca società, tributo, responsabile…" />
                 <SoloSeModifica>
-                  {(() => { const n = trovaDoppioni(pratiche).length; return n > 0 && <Bottone variante="secondario" className="ml-auto" onClick={() => setDoppi(true)}>Trova piani doppi ({n})</Bottone> })()}
+                  {(() => { const n = nDoppioni; return n > 0 && <Bottone variante="secondario" className="ml-auto" onClick={() => setDoppi(true)}>Trova piani doppi ({n})</Bottone> })()}
                 </SoloSeModifica>
               </div>
               {gruppi.length === 0 ? <Vuoto>Nessuna pratica con questi filtri.</Vuoto> : gruppi.map(({ c, pratiche: lista }) => {
@@ -137,10 +144,10 @@ export default function PaginaTributi() {
                       { chiave: 'tributo', etichetta: 'Tributo', render: (p) => <span className="font-medium">{p.tributo || '—'}</span> },
                       { chiave: 'tipo', etichetta: 'Tipo', render: (p) => etichettaDi(TIPI_PRATICA, p.tipo) },
                       { chiave: 'anno', etichetta: 'Anno', render: (p) => p.anno_rateizzo ?? (p.data_notifica ? p.data_notifica.slice(0, 4) : '—') },
-                      { chiave: 'rate', etichetta: 'Rate', render: (p) => { const r = riepilogoRate(p.rate, oggi); return p.rate.length ? `${r.ratePagate}/${r.rate}` : p.rate_concordate ? `${p.rate_concordate} concordate` : '—' } },
-                      { chiave: 'totale', etichetta: 'Totale', allinea: 'dx', render: (p) => formattaEuro(p.rate.length ? riepilogoRate(p.rate, oggi).totale.totale_cent : p.importo_cent) },
-                      { chiave: 'residuo', etichetta: 'Da pagare', allinea: 'dx', render: (p) => decaduto(p) ? <span className="text-neutro-700" title="Non più a rate: arriverà una cartella">in cartella {formattaEuro(residuoDecaduto(p).totale_cent)}</span> : p.rate.length ? formattaEuro(riepilogoRate(p.rate, oggi).residuo.totale_cent) : '—' },
-                      { chiave: 'prossima', etichetta: 'Prossima rata', render: (p) => { if (decaduto(p)) return <span className="text-[13px]">{p.cartella_arrivata_il ? `Cartella arrivata il ${formattaData(p.cartella_arrivata_il)}` : `Decaduto${p.decaduto_il ? ` il ${formattaData(p.decaduto_il)}` : ''}: cartella in arrivo`}</span>; const r = riepilogoRate(p.rate, oggi); return r.scadute.length ? <Etichetta tono="rosso">{r.scadute.length} scadut{r.scadute.length === 1 ? 'a' : 'e'}</Etichetta> : r.prossima ? `${formattaData(r.prossima.scadenza)} · ${formattaEuro(r.prossima.totale_cent)}` : '—' } },
+                      { chiave: 'rate', etichetta: 'Rate', render: (p) => { const r = riepilogoDi(p); return p.rate.length ? `${r.ratePagate}/${r.rate}` : p.rate_concordate ? `${p.rate_concordate} concordate` : '—' } },
+                      { chiave: 'totale', etichetta: 'Totale', allinea: 'dx', render: (p) => formattaEuro(p.rate.length ? riepilogoDi(p).totale.totale_cent : p.importo_cent) },
+                      { chiave: 'residuo', etichetta: 'Da pagare', allinea: 'dx', render: (p) => decaduto(p) ? <span className="text-neutro-700" title="Non più a rate: arriverà una cartella">in cartella {formattaEuro(residuoDecaduto(p).totale_cent)}</span> : p.rate.length ? formattaEuro(riepilogoDi(p).residuo.totale_cent) : '—' },
+                      { chiave: 'prossima', etichetta: 'Prossima rata', render: (p) => { if (decaduto(p)) return <span className="text-[13px]">{p.cartella_arrivata_il ? `Cartella arrivata il ${formattaData(p.cartella_arrivata_il)}` : `Decaduto${p.decaduto_il ? ` il ${formattaData(p.decaduto_il)}` : ''}: cartella in arrivo`}</span>; const r = riepilogoDi(p); return r.scadute.length ? <Etichetta tono="rosso">{r.scadute.length} scadut{r.scadute.length === 1 ? 'a' : 'e'}</Etichetta> : r.prossima ? `${formattaData(r.prossima.scadenza)} · ${formattaEuro(r.prossima.totale_cent)}` : '—' } },
                       { chiave: 'stato', etichetta: 'Stato', render: (p) => <EtichettaStato pratica={p} /> },
                     ]} />
                   </Gruppo>
@@ -198,7 +205,7 @@ function RiepilogoSocieta({ contribuenti, pratiche, onApri }: { contribuenti: Co
         { chiave: 'residuo', etichetta: 'Da pagare', allinea: 'dx', render: (x) => (
           <span className="flex flex-col items-end">
             <b>{formattaEuro(x.r.residuo.totale_cent)}</b>
-            {x.r.residuo.totale_cent > 0 && <span className="whitespace-nowrap text-[11px] font-normal text-neutro-700">Cap. {formattaEuro(x.r.residuo.quota_capitale_cent)} · Sanz. {formattaEuro(x.r.residuo.sanzioni_cent)} · Int. {formattaEuro(x.r.residuo.interessi_cent)}</span>}
+            {x.r.residuo.totale_cent > 0 && <span className="whitespace-nowrap text-[11px] font-normal text-neutro-700">{scomposizioneBreve(x.r.residuo)}</span>}
           </span>
         ) },
         { chiave: 'perc', etichetta: '% pagato', render: (x) => <BarraPagato percentuale={percentualePagata(x.r)} /> },
@@ -216,7 +223,7 @@ function RiepilogoSocieta({ contribuenti, pratiche, onApri }: { contribuenti: Co
 
 /** Scelta di un responsabile e stampa delle schede di tutti i suoi uffici (una pagina per ufficio). */
 function StampaPerResponsabile({ contribuenti }: { contribuenti: Contribuente[] }) {
-  const responsabili = [...new Set(contribuenti.map((c) => c.responsabile).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'it'))
+  const responsabili = responsabiliDi(contribuenti)
   const [scelto, setScelto] = useState('')
   return (
     <span className="flex items-center gap-2">

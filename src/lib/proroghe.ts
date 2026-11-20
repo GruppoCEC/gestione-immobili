@@ -11,7 +11,7 @@
 import { regoleImposta } from './imposta'
 import { canoneMensilePer } from './canone'
 import { aggiungiGiorni, scadenzaVersamento } from './ravvedimento'
-import { inCedolare, type Annualita, type Contratto } from './tipi'
+import { inCedolare, type Annualita, type Contratto, type Societa } from './tipi'
 
 /** Anni di ogni rinnovo per tipo di contratto (null = nessun rinnovo automatico, es. transitorio). */
 export const ANNI_RINNOVO: Record<string, number | null> = {
@@ -41,10 +41,10 @@ export function anniRinnovo(c: Contratto): number | null {
 }
 
 /** Annualità (non ancora salvata) per la prima annualità della proroga che inizia in `data`. */
-function annualitaDiProroga(c: Contratto, tutte: Annualita[], data: string): Annualita {
+function annualitaDiProroga(c: Contratto, tutte: Annualita[], data: string, locatore?: Pick<Societa, 'tipo'>): Annualita {
   const k = canoneMensilePer(c, tutte, data.slice(0, 7))
   const mensile = k.imponibile_cent ?? c.canone_mensile_cent ?? (c.canone_annuale_cent != null ? Math.round(c.canone_annuale_cent / 12) : 0)
-  const regole = regoleImposta(c)
+  const regole = regoleImposta(c, locatore)
   const annuo = mensile * 12
   const imposta = Math.round(annuo * (regole.base / 100) * (regole.percento / 100))
   return {
@@ -65,12 +65,15 @@ function annualitaDiProroga(c: Contratto, tutte: Annualita[], data: string): Ann
  * Con `tutte = true` restituisce anche quelle già pagate. Esclusi: contratti cessati prima della scadenza,
  * in cedolare secca (nessuna imposta), senza prima scadenza o senza rinnovo (es. transitori).
  */
-export function proroghePreviste(contratti: Contratto[], annualita: Annualita[], oggi: string, tutte = false): ProrogaAttesa[] {
+export function proroghePreviste(
+  contratti: Contratto[], annualita: Annualita[], oggi: string, tutte = false,
+  locatoreDi?: (c: Contratto) => Pick<Societa, 'tipo'> | undefined,
+): ProrogaAttesa[] {
   const limite = aggiungiGiorni(oggi, GIORNI_ANTICIPO)
   const out: ProrogaAttesa[] = []
   for (const c of contratti) {
     const anni = anniRinnovo(c)
-    if (!c.prima_scadenza || !anni || inCedolare(c)) continue
+    if (!c.prima_scadenza || !anni || inCedolare(c) || senzaRinnovo(c)) continue
     for (let data = c.prima_scadenza, i = 0; data <= limite && i < 20; data = piuAnni(data, anni), i++) {
       if (c.data_decorrenza && data <= c.data_decorrenza) continue
       if (c.stato === 'cessato' && (!c.data_cessazione || c.data_cessazione <= data)) break
@@ -81,7 +84,7 @@ export function proroghePreviste(contratti: Contratto[], annualita: Annualita[],
       out.push({
         id: esistente?.id ?? `proroga:${c.id}:${data}`, contratto: c, data, fine: piuAnni(data, anni), anni,
         scadenzaVersamento: scadenzaVersamento(data),
-        annualita: esistente ? { ...esistente, proroga: 'si' } : annualitaDiProroga(c, annualita, data),
+        annualita: esistente ? { ...esistente, proroga: 'si' } : annualitaDiProroga(c, annualita, data, locatoreDi?.(c)),
         registrata: !!esistente, pagata,
       })
     }
@@ -92,4 +95,28 @@ export function proroghePreviste(contratti: Contratto[], annualita: Annualita[],
 /** Contratti attivi per cui non si possono calcolare le proroghe (manca la prima scadenza). */
 export function contrattiSenzaScadenza(contratti: Contratto[]): Contratto[] {
   return contratti.filter((c) => c.stato !== 'cessato' && !inCedolare(c) && anniRinnovo(c) !== null && !c.prima_scadenza)
+}
+
+/** Vero se nella scheda del contratto il rinnovo automatico è indicato "No". */
+const senzaRinnovo = (c: Contratto) => c.rinnovo_automatico === 'no'
+
+/**
+ * Contratti ancora attivi già arrivati alla scadenza ma con "Rinnovo automatico: No": per loro non si propone la proroga
+ * (né la sua imposta). Vanno controllati: o il contratto è cessato (registrare la cessazione) o il rinnovo va indicato "Sì".
+ */
+export function contrattiScadutiSenzaRinnovo(contratti: Contratto[], oggi: string): Contratto[] {
+  return contratti.filter((c) => c.stato !== 'cessato' && senzaRinnovo(c) && !!c.prima_scadenza && c.prima_scadenza <= oggi)
+}
+
+/**
+ * Scadenza del periodo contrattuale in corso: la prima scadenza finché non è passata, poi quella dei rinnovi successivi
+ * (es. 4+4 decorso il 01/01/2018: 01/01/2022, poi 01/01/2026, poi 01/01/2030…). Senza rinnovo automatico, o per i
+ * contratti che non si rinnovano (transitori), resta la prima scadenza. Stringa vuota se manca la prima scadenza.
+ */
+export function prossimaScadenza(c: Contratto, oggi: string): string {
+  const anni = anniRinnovo(c)
+  if (!c.prima_scadenza || !anni || senzaRinnovo(c) || c.tipologia === 'transitorio') return c.prima_scadenza ?? ''
+  let data = c.prima_scadenza
+  for (let i = 0; data < oggi && i < 50; i++) data = piuAnni(data, anni)
+  return data
 }

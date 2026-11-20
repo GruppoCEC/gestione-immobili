@@ -33,10 +33,10 @@ export default function PaginaImporta() {
     fetch(FILE_LOCALE, { method: 'HEAD' }).then((r) => setFileLocale(r.ok)).catch(() => setFileLocale(false))
   }, [])
 
-  function analizza(buffer: ArrayBuffer) {
+  async function analizza(buffer: ArrayBuffer) {
     setErrore(null); setEsito(null)
     try {
-      const ris = analizzaRendimentiAffitti(buffer)
+      const ris = await analizzaRendimentiAffitti(buffer)
       setRighe(ris.righe); setAvvisi(ris.avvisi)
       setPiano(preparaImportazione(ris.righe, {
         societa: attivi(dati<Societa>('societa')), immobili: attivi(dati<Immobile>('immobili')),
@@ -45,12 +45,12 @@ export default function PaginaImporta() {
     } catch (e) { setErrore('Impossibile leggere il file: ' + (e as Error).message) }
   }
 
-  async function daFile(f: File | undefined) { if (f) { setNomeFile(f.name); analizza(await f.arrayBuffer()) } }
+  async function daFile(f: File | undefined) { if (f) { setNomeFile(f.name); await analizza(await f.arrayBuffer()) } }
   async function daLocale() {
     const r = await fetch(FILE_LOCALE)
     if (!r.ok) { setErrore('File di esempio non trovato nella cartella dati-excel.'); return }
     setNomeFile('affitti aggiornati.xlsx')
-    analizza(await r.arrayBuffer())
+    await analizza(await r.arrayBuffer())
   }
 
   async function importa() {

@@ -11,7 +11,8 @@
  */
 import type { RataTributo } from './tipi'
 import type { PianoPdf } from './pdfRateizzo'
-import { giorniTra, primoLavorativo } from './ravvedimento'
+import { primoLavorativo } from './ravvedimento'
+import { fineMeseDopo, giorniTra } from './utils/date'
 
 export interface ParametriPiano {
   importo_cent: number        // importo da rateizzare (imposta + sanzioni, senza interessi)
@@ -23,14 +24,6 @@ export interface ParametriPiano {
   sanzioni_percento: number   // sanzione in % dell'imposta (10 = come nell'Excel)
 }
 
-const due = (n: number) => String(n).padStart(2, '0')
-
-/** Ultimo giorno del mese che si trova `mesi` mesi dopo quello della data. */
-function fineMeseDopo(data: string, mesi: number): string {
-  const [a, m] = data.split('-').map(Number)
-  const d = new Date(Date.UTC(a, m - 1 + mesi + 1, 0))
-  return `${d.getUTCFullYear()}-${due(d.getUTCMonth() + 1)}-${due(d.getUTCDate())}`
-}
 
 /** Divide una quota 9001 in imposta e sanzioni secondo la percentuale di sanzione. */
 export function dividiQuota(quota_cent: number, sanzioni_percento: number): { quota_capitale_cent: number; sanzioni_cent: number } {

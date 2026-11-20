@@ -57,14 +57,18 @@ function notifica(): void {
 async function leggiCollezione<T extends RecordBase>(token: string, nome: NomeCollezione): Promise<Cache<T>> {
   const file = await leggiFile(token, percorsoCollezione(nome))
   if (!file) return { record: [], sha: null }
-  let record: T[]
+  let dati: unknown
   try {
-    const dati = JSON.parse(file.contenuto) as unknown
-    record = Array.isArray(dati) ? (dati as T[]) : []
+    dati = JSON.parse(file.contenuto)
   } catch {
     throw new Error(`Il file ${percorsoCollezione(nome)} non è un JSON valido: controllarlo su GitHub.`)
   }
-  return { record, sha: file.sha }
+  // Un file che non contiene un elenco NON va trattato come vuoto: il salvataggio successivo lo sovrascriverebbe
+  // cancellando tutti i dati. Meglio fermarsi e far controllare il file.
+  if (!Array.isArray(dati)) {
+    throw new Error(`Il file ${percorsoCollezione(nome)} non contiene un elenco di schede come previsto: per non perdere dati non viene letto né salvato. Controllarlo su GitHub (Storico) o ripristinare un backup.`)
+  }
+  return { record: dati as T[], sha: file.sha }
 }
 
 /** Carica una collezione (dalla cache se già letta, altrimenti da GitHub). */

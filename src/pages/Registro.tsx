@@ -13,6 +13,7 @@ import { attivi } from '../lib/store'
 import { TIPOLOGIE_CONTRATTO, etichettaDi, impostaDaPagare, inCedolare, rimborsoDaIncassare, statoIva, type Annualita, type Conduttore, type Contratto, type Immobile, type Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { canoneMensilePer } from '../lib/canone'
 
 type RigaContratto = Contratto & { societa: string; immobile: string; conduttore: string; nAnnualita: number; ultimoAnno: number | null; daPagare: number; mancanti: number[] }
 type RigaAnnualita = Annualita & { societa: string; immobile: string; conduttore: string; cedolare: boolean; contratto: Contratto | undefined }
@@ -77,6 +78,8 @@ export default function PaginaRegistro() {
   const conduttori = attivi(dati<Conduttore>('conduttori'))
   const societa = attivi(dati<Societa>('societa'))
   const annualita = attivi(dati<Annualita>('annualita'))
+  // Canone mensile (imponibile) in vigore oggi, con gli aumenti ISTAT registrati
+  const canoneOggi = (c: Contratto) => canoneMensilePer(c, annualita, oggiIso().slice(0, 7)).imponibile_cent
   const oggi = oggiIso()
 
   const descrivi = (c: Contratto) => {
@@ -84,12 +87,12 @@ export default function PaginaRegistro() {
     return { societa: societa.find((s) => s.id === imm?.societa_id)?.ragione_sociale ?? '—', immobile: imm?.indirizzo ?? '—', conduttore: conduttori.find((x) => x.id === c.conduttore_id)?.denominazione ?? '—' }
   }
 
-  // Scheda 1: tutti i contratti attivi
+  // Scheda 1: tutti i contratti attivi, più i cessati (con data di cessazione) che hanno ancora imposte da pagare
   const righeContratti: RigaContratto[] = filtraTesto(
-    contratti.filter((c) => c.stato !== 'cessato').map((c) => {
+    contratti.map((c) => {
       const mie = annualita.filter((a) => a.contratto_id === c.id)
       return { ...c, ...descrivi(c), nAnnualita: mie.length, ultimoAnno: mie.length ? Math.max(...mie.map((a) => a.anno)) : null, daPagare: mie.filter((a) => impostaDaPagare(a, c)).length, mancanti: anniMancanti(c, mie, oggi) }
-    }), ricerca)
+    }).filter((r) => r.stato !== 'cessato' || (!!r.data_cessazione && (r.mancanti.length > 0 || r.daPagare > 0))), ricerca)
   const perSocietaC = raggruppa(righeContratti, (r) => r.societa)
 
   // Scheda 2: annualità registrate
@@ -109,11 +112,11 @@ export default function PaginaRegistro() {
 
   const colonneContratti = [
     { chiave: 'imm', etichetta: 'Immobile', render: (r: RigaContratto) => <span className="font-medium">{r.immobile}</span> },
-    { chiave: 'con', etichetta: 'Conduttore', render: (r: RigaContratto) => r.conduttore },
+    { chiave: 'con', etichetta: 'Conduttore', render: (r: RigaContratto) => <>{r.conduttore}{r.stato === 'cessato' && <div><Etichetta tono="grigio">cessato il {formattaData(r.data_cessazione)}</Etichetta></div>}</> },
     { chiave: 'tip', etichetta: 'Tipo contratto', render: (r: RigaContratto) => etichettaDi(TIPOLOGIE_CONTRATTO, r.tipologia) },
     { chiave: 'iva', etichetta: 'IVA', render: (r: RigaContratto) => { const s = statoIva(r); return <Etichetta tono={s.tono}>{s.testo}</Etichetta> } },
     { chiave: 'dec', etichetta: 'Decorrenza', render: (r: RigaContratto) => formattaData(r.data_decorrenza) },
-    { chiave: 'men', etichetta: 'Canone mensile', allinea: 'dx' as const, render: (r: RigaContratto) => formattaEuro(r.canone_mensile_cent) },
+    { chiave: 'men', etichetta: 'Canone mensile', allinea: 'dx' as const, render: (r: RigaContratto) => formattaEuro(canoneOggi(r)) },
     { chiave: 'ann', etichetta: 'Annualità mancanti', render: (r: RigaContratto) => inCedolare(r) ? <span className="text-neutro-500">—</span>
       : !r.data_decorrenza ? <span className="text-neutro-500">decorrenza mancante</span>
       : r.mancanti.length ? <span className="num font-medium text-err-testo">{r.mancanti.join(', ')}</span> : <span className="text-neutro-500">nessuna</span> },
@@ -138,7 +141,7 @@ export default function PaginaRegistro() {
         sottotitolo="Registro storico, anno per anno, di aggiornamenti ISTAT, imposta di registro e rimborsi dei conduttori."
         azioni={<Bottone variante="secondario" onClick={() => scaricaExcel('ISTAT_imposta_registro', [
           { nome: 'Annualità', righe: righeAnnualita.map((a) => ({ 'Anno': a.anno, 'Società': a.societa, 'Immobile': a.immobile, 'Conduttore': a.conduttore, 'Inizio annualità': formattaData(a.data_inizio), 'ISTAT applicato': a.istat_applicato === 'si' ? 'Sì' : 'No', 'Indice ISTAT %': a.istat_indice_percento ?? '', 'Quota %': a.istat_quota_percento ?? '', 'Mensile prima': (a.canone_mensile_precedente_cent ?? 0) / 100, 'Mensile dopo': (a.canone_mensile_nuovo_cent ?? 0) / 100, 'Annuo dopo': (a.canone_nuovo_cent ?? 0) / 100, 'Aliquota %': a.imposta_percento ?? '', 'Base %': a.base_imponibile_percento ?? '', 'Imposta': (a.imposta_cent ?? 0) / 100, 'Pagata': a.cedolare ? 'Non dovuta (cedolare secca)' : a.imposta_pagata === 'si' ? 'Sì' : 'No', 'Data pagamento': formattaData(a.imposta_data_pagamento), 'Quota conduttore': (a.quota_conduttore_cent ?? 0) / 100, 'Rimborso ricevuto': a.cedolare ? 'Non dovuto (cedolare secca)' : a.rimborso_ricevuto === 'si' ? 'Sì' : 'No', 'Data rimborso': formattaData(a.rimborso_data), 'Note': a.note })) },
-          { nome: 'Contratti', righe: righeContratti.map((r) => ({ 'Società': r.societa, 'Immobile': r.immobile, 'Conduttore': r.conduttore, 'Tipo': etichettaDi(TIPOLOGIE_CONTRATTO, r.tipologia), 'IVA': statoIva(r).testo, 'Decorrenza': formattaData(r.data_decorrenza), 'Canone mensile': (r.canone_mensile_cent ?? 0) / 100, 'Annualità mancanti': r.mancanti.join(', '), 'Ultimo anno registrato': r.ultimoAnno ?? '', 'Cedolare secca': inCedolare(r) ? 'Sì' : 'No', 'Annualità da pagare': r.mancanti.length })) },
+          { nome: 'Contratti', righe: righeContratti.map((r) => ({ 'Società': r.societa, 'Immobile': r.immobile, 'Conduttore': r.conduttore, 'Tipo': etichettaDi(TIPOLOGIE_CONTRATTO, r.tipologia), 'IVA': statoIva(r).testo, 'Decorrenza': formattaData(r.data_decorrenza), 'Canone mensile': (canoneOggi(r) ?? 0) / 100, 'Annualità mancanti': r.mancanti.join(', '), 'Ultimo anno registrato': r.ultimoAnno ?? '', 'Cedolare secca': inCedolare(r) ? 'Sì' : 'No', 'Annualità da pagare': r.mancanti.length })) },
         ])}><FileSpreadsheet size={16} /> Esporta Excel</Bottone>} />
       <Promemoria />
 
