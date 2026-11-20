@@ -11,7 +11,7 @@ export const CONFIG = {
   /** Token GitHub cifrato con la password condivisa (prodotto da `npm run cifra-token`) */
   tokenCifrato,
   /** Dimensioni allegati */
-  allegatoMaxByte: 50 * 1024 * 1024,      // 50 MB: oltre l'app rifiuta il file
+  allegatoMaxByte: 25 * 1024 * 1024,      // 25 MB: oltre l'app rifiuta il file (file più grandi su GitHub danno spesso errore)
   allegatoAvvisoByte: 10 * 1024 * 1024,   // 10 MB: oltre l'app consiglia di comprimere
   /** Giorni prima della scadenza del token in cui avvisare */
   avvisoScadenzaTokenGiorni: 30,

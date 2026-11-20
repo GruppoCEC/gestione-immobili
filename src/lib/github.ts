@@ -78,33 +78,63 @@ function intestazioni(token: string, accept = 'application/vnd.github+json'): He
   }
 }
 
-function messaggioPerStato(stato: number, dettaglio?: string): string {
-  switch (stato) {
-    case 401: return 'Token non valido o scaduto: rinnovare il token (vedi Impostazioni).'
-    case 403: return 'Accesso negato dal server GitHub (permessi insufficienti o troppe richieste). Riprovare tra qualche minuto.'
-    case 404: return 'File o repository non trovato. Controllare nome utente e repository in configurazione.'
-    case 409:
-    case 422: return 'Un altro utente ha salvato nel frattempo: la modifica verrà riapplicata sui dati aggiornati.'
-    default: return `Errore di comunicazione con GitHub (codice ${stato})${dettaglio ? ': ' + dettaglio : ''}.`
+const due = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * Messaggio in italiano per una risposta di errore di GitHub. Il dettaglio tecnico (in inglese) non viene mostrato
+ * all'utente: finisce solo nella console del browser. `intestazioni` serve per i limiti di richieste.
+ */
+export function descriviErrore(stato: number, dettaglio?: string, intestazioni?: Headers): { messaggio: string; conflitto: boolean } {
+  const d = (dettaglio ?? '').toLowerCase()
+  const conflitto = stato === 409 || (stato === 422 && d.includes('sha'))
+  if (conflitto) return { messaggio: 'Un altro utente ha salvato nel frattempo: la modifica verrà riapplicata sui dati aggiornati.', conflitto }
+  const rimaste = intestazioni?.get('x-ratelimit-remaining')
+  const dopo = intestazioni?.get('retry-after')
+  if (stato === 429 || ((stato === 403 || stato === 429) && (rimaste === '0' || dopo || d.includes('rate limit')))) {
+    const reset = Number(intestazioni?.get('x-ratelimit-reset'))
+    const quando = reset ? new Date(reset * 1000) : dopo ? new Date(Date.now() + Number(dopo) * 1000) : null
+    return { messaggio: `Troppe richieste a GitHub in poco tempo: riprovare ${quando ? `dopo le ${due(quando.getHours())}:${due(quando.getMinutes())}` : 'tra qualche minuto'}. I dati già salvati non si perdono.`, conflitto }
   }
+  switch (stato) {
+    case 401: return { messaggio: 'Token non valido o scaduto: rinnovare il token (vedi Impostazioni).', conflitto }
+    case 403: return { messaggio: 'Accesso negato da GitHub: il token non ha i permessi necessari su questo repository (vedi Impostazioni).', conflitto }
+    case 404: return { messaggio: 'File o repository non trovato. Controllare nome utente e repository in configurazione.', conflitto }
+    case 413: return { messaggio: 'Il file è troppo grande per GitHub: comprimerlo (o scansionarlo a risoluzione più bassa) e riprovare.', conflitto }
+    case 422: return { messaggio: 'GitHub ha rifiutato il salvataggio (file troppo grande o dati non accettati). Nessuna modifica è stata fatta: riprovare o comprimere il file.', conflitto }
+  }
+  if (stato >= 500) return { messaggio: 'GitHub non risponde in questo momento (problema temporaneo dei suoi server): riprovare tra qualche minuto.', conflitto }
+  return { messaggio: `Errore di comunicazione con GitHub (codice ${stato}). Riprovare; se continua, avvisare l'amministratore.`, conflitto }
 }
 
+function messaggioPerStato(stato: number, dettaglio?: string): string {
+  return descriviErrore(stato, dettaglio).messaggio
+}
+
+/** Le letture che falliscono per rete o per un errore temporaneo di GitHub si ripetono da sole (le scritture no). */
+const RIPROVE_LETTURA = 2
+const temporaneo = (stato: number) => stato === 0 || stato === 500 || stato === 502 || stato === 503 || stato === 504
+
 async function richiesta(token: string, percorso: string, init: RequestInit = {}, accept?: string): Promise<Response> {
-  let risposta: Response
-  try {
-    // no-store: GitHub fa tenere al browser le letture per 60 secondi; senza questo, dopo il salvataggio di un collega
-    // si rileggerebbe la versione vecchia (con lo SHA vecchio) e ogni nuovo tentativo di salvataggio andrebbe in conflitto
-    risposta = await fetch(`${base()}${percorso}`, { cache: 'no-store', ...init, headers: { ...intestazioni(token, accept), ...(init.headers ?? {}) } })
-  } catch {
-    throw new ErroreGitHub('Connessione a GitHub non riuscita: verificare la rete.', 0)
-  }
-  if (!risposta.ok) {
+  const lettura = !init.method || init.method === 'GET'
+  for (let tentativo = 0; ; tentativo++) {
+    if (tentativo > 0) await new Promise((ok) => setTimeout(ok, 800 * tentativo))
+    let risposta: Response
+    try {
+      // no-store: GitHub fa tenere al browser le letture per 60 secondi; senza questo, dopo il salvataggio di un collega
+      // si rileggerebbe la versione vecchia (con lo SHA vecchio) e ogni nuovo tentativo di salvataggio andrebbe in conflitto
+      risposta = await fetch(`${base()}${percorso}`, { cache: 'no-store', ...init, headers: { ...intestazioni(token, accept), ...(init.headers ?? {}) } })
+    } catch {
+      if (lettura && tentativo < RIPROVE_LETTURA) continue
+      throw new ErroreGitHub('Connessione a GitHub non riuscita: verificare la rete e riprovare.', 0)
+    }
+    if (risposta.ok) return risposta
+    if (lettura && temporaneo(risposta.status) && tentativo < RIPROVE_LETTURA) continue
     let dettaglio: string | undefined
     try { dettaglio = ((await risposta.json()) as { message?: string }).message } catch { /* nessun dettaglio */ }
-    const conflitto = risposta.status === 409 || (risposta.status === 422 && !!dettaglio?.toLowerCase().includes('sha'))
-    throw new ErroreGitHub(messaggioPerStato(risposta.status, dettaglio), risposta.status, conflitto)
+    if (dettaglio && risposta.status !== 404) console.warn(`GitHub ${risposta.status} su ${init.method ?? 'GET'} ${percorso}: ${dettaglio}`)
+    const { messaggio, conflitto } = descriviErrore(risposta.status, dettaglio, risposta.headers)
+    throw new ErroreGitHub(messaggio, risposta.status, conflitto)
   }
-  return risposta
 }
 
 /** Verifica che il token permetta di leggere il repository dati. Restituisce il nome del repo. */

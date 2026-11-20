@@ -7,7 +7,7 @@ import { useRef, useState } from 'react'
 import { FileText, Paperclip, Trash2, Upload } from 'lucide-react'
 import { CONFIG } from '../config'
 import { scaricaAllegato } from '../lib/github'
-import { controllaDimensione, eliminaAllegati, salvaAllegato } from '../lib/allegati'
+import { controllaDimensione, eliminaAllegati, modoApertura, salvaAllegato } from '../lib/allegati'
 import { useSessioneAttiva } from '../lib/sessione'
 import { attivi, type NomeCollezione } from '../lib/store'
 import { CATEGORIE_ALLEGATO, etichettaDi, type Allegato, type Opzione } from '../lib/tipi'
@@ -55,8 +55,10 @@ export default function Allegati({ collezione, recordId, categorie = CATEGORIE_A
     setErrore(null); setInCorso('Apertura…')
     try {
       const blob = await scaricaAllegato(token, a.percorso)
-      const url = URL.createObjectURL(a.tipo_mime ? new Blob([blob], { type: a.tipo_mime }) : blob)
-      const w = window.open(url, '_blank')
+      // PDF e immagini si aprono in una nuova scheda; gli altri file si scaricano (mai eseguiti dentro il sito)
+      const modo = modoApertura(a.tipo_mime, a.nome_file)
+      const url = URL.createObjectURL(new Blob([blob], { type: modo.tipo }))
+      const w = modo.apri ? window.open(url, '_blank') : null
       if (!w) { const l = document.createElement('a'); l.href = url; l.download = a.nome_file; l.click() }
       setTimeout(() => URL.revokeObjectURL(url), 60_000)
     } catch (e) { setErrore((e as Error).message) } finally { setInCorso(null) }
