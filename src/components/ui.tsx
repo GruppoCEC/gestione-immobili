@@ -203,6 +203,19 @@ export function Avviso({ tipo = 'info', children }: { tipo?: 'info' | 'errore' |
   )
 }
 
+/** Avviso breve in basso a destra (es. "Emanuela ha aggiornato: Canoni e incassi"), non blocca la pagina. */
+export function Notifica({ testo, onChiudi }: { testo: string; onChiudi: () => void }) {
+  return (
+    <div role="status" aria-live="polite" className="no-stampa fixed bottom-4 right-4 z-[70] max-w-[420px]">
+      <Riquadro className="ombra-lg flex items-start gap-2.5 bg-sfondo px-4 py-3 text-[13px]">
+        <Info size={16} className="mt-0.5 flex-none text-accento-700" />
+        <span className="min-w-0 flex-1">{testo}</span>
+        <button type="button" onClick={onChiudi} aria-label="Chiudi avviso" className="flex-none text-neutro-700 hover:text-testo"><X size={14} /></button>
+      </Riquadro>
+    </div>
+  )
+}
+
 export function Vuoto({ children }: { children: ReactNode }) {
   return <Riquadro className="p-14 text-center text-neutro-700">{children}</Riquadro>
 }

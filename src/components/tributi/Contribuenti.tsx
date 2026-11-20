@@ -6,13 +6,14 @@ import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { normalizzaNome, vuotoContribuente } from '../../lib/importaTributi'
 import { useSessioneAttiva } from '../../lib/sessione'
-import { aggiorna, attivi, campiModifica } from '../../lib/store'
+import { aggiorna, attivi, campiModifica, descriviUnione, sostituisciUnendo, type EsitoUnione } from '../../lib/store'
 import type { Conduttore, Contribuente, PraticaTributo, Societa } from '../../lib/tipi'
 import { daInserire, inCorso } from '../../lib/tributi'
 import { useCollezioni } from '../../lib/useCollezioni'
-import Modulo, { type CampoDef } from '../Modulo'
+import Modulo, { etichetteDi, type CampoDef } from '../Modulo'
 import { SoloSeModifica } from '../SoloLettura'
 import { BarraRicerca, Bottone, Finestra, Tabella, filtraTesto } from '../ui'
+import { avvisa } from '../../lib/aggiornamenti'
 
 type Valori = Contribuente & { alias_testo: string }
 
@@ -45,12 +46,16 @@ export default function Contribuenti({ contribuenti, pratiche }: { contribuenti:
     const nomeNuovo = (v.nome ?? '').trim()
     const doppione = contribuenti.find((c) => c.id !== v.id && [c.nome, ...(c.alias ?? [])].some((x) => normalizzaNome(x) === normalizzaNome(nomeNuovo)))
     if (doppione) throw new Error(`Esiste già la società "${doppione.nome}" con questo nome (o alias).`)
-    const alias = (v.alias_testo ?? '').split(',').map((a) => a.trim()).filter(Boolean)
-    const { alias_testo: _ignora, ...resto } = v
-    void _ignora
-    const record = { ...resto, nome: nomeNuovo, alias } as Contribuente
+    // Dal modulo (alias scritti come testo separato da virgole) alla scheda
+    const inScheda = (x: Partial<Valori>) => {
+      const { alias_testo: testoAlias, ...resto } = x
+      return { ...resto, nome: (x.nome ?? '').trim(), alias: (testoAlias ?? '').split(',').map((a) => a.trim()).filter(Boolean) } as Contribuente
+    }
+    const record = inScheda(v)
     if (v.id) {
-      await aggiorna<Contribuente>(token, 'contribuenti', (rec) => rec.map((c) => (c.id === v.id ? { ...c, ...record, ...campiModifica(nome) } : c)), `${nome}: modifica società tributi ${nomeNuovo}`)
+      let esito: EsitoUnione | null = null
+      await aggiorna<Contribuente>(token, 'contribuenti', (rec) => { const u = sostituisciUnendo(rec, v.id!, record, inScheda(aperto ?? {}), nome); esito = u.esito; return u.record }, `${nome}: modifica società tributi ${nomeNuovo}`)
+      avvisa(descriviUnione(esito, etichetteDi(campi)))
     } else {
       const nuovo = vuotoContribuente(nome, nomeNuovo)
       await aggiorna<Contribuente>(token, 'contribuenti', (rec) => [...rec, { ...nuovo, ...record, id: nuovo.id, creato_il: nuovo.creato_il, creato_da: nuovo.creato_da, eliminato_il: null }], `${nome}: nuova società tributi ${nomeNuovo}`)

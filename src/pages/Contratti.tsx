@@ -4,11 +4,11 @@ import { Link } from 'react-router-dom'
 import { righeDaCampi, scaricaExcel } from '../lib/esporta'
 import { SoloSeModifica } from '../components/SoloLettura'
 import Allegati from '../components/Allegati'
-import Modulo, { type CampoDef } from '../components/Modulo'
+import Modulo, { etichetteDi, type CampoDef } from '../components/Modulo'
 import RegistroAnnuale from '../components/RegistroAnnuale'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, IntestazionePagina, Segmentato, Tabella, filtraTesto } from '../components/ui'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
+import { aggiorna, attivi, campiModifica, campiNuovo, descriviUnione, sostituisciUnendo, type EsitoUnione } from '../lib/store'
 import {
   MODALITA_REGISTRAZIONE, PERIODICITA, inCedolare, REGIMI_IVA, SI_NO, STATI_CONTRATTO, TIPOLOGIE_CONTRATTO, etichettaDi, statoIva,
   type Annualita, type Conduttore, type Contratto, type Immobile, type Societa,
@@ -17,6 +17,7 @@ import { canoneMensilePer } from '../lib/canone'
 import { prossimaScadenza } from '../lib/proroghe'
 import { useCollezioni } from '../lib/useCollezioni'
 import { aggiungiAnni, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
+import { avvisa } from '../lib/aggiornamenti'
 
 const VUOTO: Partial<Contratto> = {
   immobile_id: '', conduttore_id: '', tipologia: '', stato: 'attivo', data_sottoscrizione: '', data_decorrenza: '', durata_anni: null,
@@ -117,10 +118,12 @@ export default function PaginaContratti() {
 
   async function salva(v: Partial<Contratto>) {
     const esistente = !!v.id
-    await aggiorna<Contratto>(token, 'contratti', (rec) => esistente
-      ? rec.map((r) => (r.id === v.id ? { ...r, ...v, ...campiModifica(nome) } as Contratto : r))
-      : [...rec, { ...VUOTO, ...v, ...campiNuovo(nome) } as Contratto],
-    `${nome}: ${esistente ? 'modifica' : 'nuovo'} contratto ${descrivi(v)}`)
+    let esito: EsitoUnione | null = null
+    await aggiorna<Contratto>(token, 'contratti', (rec) => {
+      if (!esistente) return [...rec, { ...VUOTO, ...v, ...campiNuovo(nome) } as Contratto]
+      const u = sostituisciUnendo(rec, v.id!, v, aperto ?? {}, nome); esito = u.esito; return u.record
+    }, `${nome}: ${esistente ? 'modifica' : 'nuovo'} contratto ${descrivi(v)}`)
+    avvisa(descriviUnione(esito, etichetteDi(campi)))
     setAperto(null)
   }
   async function elimina() {

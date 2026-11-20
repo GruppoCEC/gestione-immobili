@@ -8,6 +8,9 @@ import { analizzaEuro, centesimiInTesto, formattaEuro } from '../lib/utils/forma
 import { Avviso, Bottone, Segmentato, useModificheNonSalvate } from './ui'
 import { useSoloLettura } from './SoloLettura'
 
+/** Etichette dei campi per nome (per gli avvisi, es. "Per Telefono vale la tua versione"). */
+export const etichetteDi = <T,>(campi: CampoDef<T>[]): Record<string, string> => Object.fromEntries(campi.map((c) => [c.nome, c.etichetta]))
+
 export type TipoCampo = 'testo' | 'textarea' | 'numero' | 'euro' | 'data' | 'select' | 'percentuale' | 'multiselect'
 
 export interface CampoDef<T> {

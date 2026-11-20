@@ -7,7 +7,7 @@ import { useSoloLettura } from '../components/SoloLettura'
 import { MODO_DEMO } from '../lib/github'
 import { analizzaRendimentiAffitti, preparaImportazione, type PianoImportazione, type RigaImportata } from '../lib/importaExcel'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi } from '../lib/store'
+import { aggiornaInsieme, attivi, passo } from '../lib/store'
 import type { Conduttore, Contratto, Immobile, Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaEuro } from '../lib/utils/formato'
@@ -57,11 +57,14 @@ export default function PaginaImporta() {
     if (!piano) return
     setInCorso(true); setErrore(null)
     try {
-      const m = `${nome}: importazione da Excel`
-      if (piano.societa.length) await aggiorna<Societa>(token, 'societa', (r) => [...r, ...piano.societa], `${m} (società)`)
-      if (piano.conduttori.length) await aggiorna<Conduttore>(token, 'conduttori', (r) => [...r, ...piano.conduttori], `${m} (conduttori)`)
-      if (piano.immobili.length) await aggiorna<Immobile>(token, 'immobili', (r) => [...r, ...piano.immobili], `${m} (immobili)`)
-      if (piano.contratti.length) await aggiorna<Contratto>(token, 'contratti', (r) => [...r, ...piano.contratti], `${m} (contratti)`)
+      // Tutte le anagrafiche in UN SOLO salvataggio: un'importazione interrotta non lascia contratti senza immobili
+      const aggiungi = <T extends { id: string }>(nuovi: T[]) => (r: T[]) => [...r.filter((x) => !nuovi.some((n) => n.id === x.id)), ...nuovi]
+      await aggiornaInsieme(token, [
+        ...(piano.societa.length ? [passo<Societa>('societa', aggiungi(piano.societa))] : []),
+        ...(piano.conduttori.length ? [passo<Conduttore>('conduttori', aggiungi(piano.conduttori))] : []),
+        ...(piano.immobili.length ? [passo<Immobile>('immobili', aggiungi(piano.immobili))] : []),
+        ...(piano.contratti.length ? [passo<Contratto>('contratti', aggiungi(piano.contratti))] : []),
+      ], `${nome}: importazione da Excel (${piano.societa.length} società, ${piano.immobili.length} immobili, ${piano.conduttori.length} conduttori, ${piano.contratti.length} contratti)`)
       setEsito(`Importazione completata: ${piano.societa.length} società, ${piano.immobili.length} immobili, ${piano.conduttori.length} conduttori, ${piano.contratti.length} contratti.`)
       setRighe(null); setPiano(null)
     } catch (e) { setErrore((e as Error).message) } finally { setInCorso(false) }

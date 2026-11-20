@@ -8,9 +8,10 @@ import { useEffect, useState } from 'react'
 import { Archive, Download, HardDrive, Trash2 } from 'lucide-react'
 import { zipSync } from 'fflate'
 import { COLLEZIONI } from '../lib/backup'
-import { MODO_DEMO, eliminaFile, scaricaAllegato, spazioRepository, type SpazioOccupato as Spazio } from '../lib/github'
+import { eliminaAllegati } from '../lib/allegati'
+import { MODO_DEMO, scaricaAllegato, spazioRepository, type SpazioOccupato as Spazio } from '../lib/github'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, inCache, type NomeCollezione } from '../lib/store'
+import { attivi, inCache, type NomeCollezione } from '../lib/store'
 import type { Allegato, Contribuente, PraticaTributo } from '../lib/tipi'
 import { statoEffettivo } from '../lib/tributi'
 import { useCollezioni } from '../lib/useCollezioni'
@@ -155,18 +156,12 @@ function LiberaSpazio({ token, nome, allegati, eliminati, pratiche, contribuenti
       ? `Rimuovere ${selezionati.length} allegati (${formattaByte(totaleScelti)}) dalla piattaforma?`
       : `ATTENZIONE: non hai scaricato lo ZIP di questi ${selezionati.length} allegati. Rimuoverli comunque?`
     if (!window.confirm(avviso)) return
-    const ids = new Set(selezionati.map((a) => a.id))
     try {
-      setStato('Registrazione…')
-      await aggiorna<Allegato>(token, 'allegati', (r) => r.map((x) => (ids.has(x.id) ? { ...x, eliminato_il: new Date().toISOString(), note: [x.note, 'Rimosso con "Libera spazio"'].filter(Boolean).join(' · '), ...campiModifica(nome) } : x)),
-        `${nome}: libera spazio, rimuove ${selezionati.length} allegati`)
-      let falliti = 0, i = 0
-      for (const a of selezionati) {
-        setStato(`Rimozione ${++i} di ${selezionati.length}…`)
-        try { await eliminaFile(token, a.percorso, '', `${nome}: libera spazio, rimuove "${a.nome_file}"`) } catch { falliti++ }
-      }
+      // Registrazioni e file in un unico salvataggio (prima: un salvataggio per ogni file)
+      setStato(`Rimozione di ${selezionati.length} allegati…`)
+      const mancanti = await eliminaAllegati(token, nome, selezionati, `${nome}: libera spazio, rimuove ${selezionati.length} allegati`, 'Rimosso con "Libera spazio"')
       setScelti(new Set())
-      setEsito({ tipo: falliti ? 'errore' : 'ok', testo: `Rimossi ${selezionati.length - falliti} allegati (${formattaByte(totaleScelti)}).${falliti ? ` ${falliti} file non trovati nel repository (già rimossi).` : ''}${MODO_DEMO ? ' Lo spazio del browser è stato liberato.' : ' Su GitHub lo spazio si libera davvero dopo la compattazione (vedi sotto).'}` })
+      setEsito({ tipo: 'ok', testo: `Rimossi ${selezionati.length} allegati (${formattaByte(totaleScelti)}).${mancanti.length ? ` ${mancanti.length} file non erano già più nel repository.` : ''}${MODO_DEMO ? ' Lo spazio del browser è stato liberato.' : ' Su GitHub lo spazio si libera davvero dopo la compattazione (vedi sotto).'}` })
     } catch (e) { setEsito({ tipo: 'errore', testo: (e as Error).message }) } finally { setStato(null) }
   }
 

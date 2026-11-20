@@ -2,12 +2,13 @@
 import { useState, type ReactNode } from 'react'
 import { FileSpreadsheet, Plus } from 'lucide-react'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, campiNuovo, type NomeCollezione, type RecordBase } from '../lib/store'
+import { aggiorna, attivi, campiModifica, campiNuovo, descriviUnione, sostituisciUnendo, type EsitoUnione, type NomeCollezione, type RecordBase } from '../lib/store'
 import { useCollezioni } from '../lib/useCollezioni'
-import Modulo, { type CampoDef } from './Modulo'
+import Modulo, { etichetteDi, type CampoDef } from './Modulo'
 import { SoloSeModifica } from './SoloLettura'
 import { righeDaCampi, scaricaExcel } from '../lib/esporta'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Finestra, IntestazionePagina, Tabella, filtraTesto, type Colonna } from './ui'
+import { avvisa } from '../lib/aggiornamenti'
 
 interface Props<T extends RecordBase> {
   titolo: string
@@ -51,10 +52,15 @@ export default function PaginaAnagrafica<T extends RecordBase>(p: Props<T>) {
     for (const k of p.campiVirtuali ?? []) delete valori[k]
     const esistente = !!valori.id
     const nuovi = esistente ? null : campiNuovo(nome)
+    // Valori con cui la scheda era stata aperta: si salvano solo i campi cambiati (le modifiche di un collega restano)
+    const iniziale = { ...aperto, ...(aperto ? p.prepara?.(aperto, dati) ?? {} : {}) } as Record<string, unknown>
+    for (const k of p.campiVirtuali ?? []) delete iniziale[k]
+    let esito: EsitoUnione | null = null
     await aggiorna<T>(token, p.collezione, (rec) => {
-      if (esistente) return rec.map((r) => (r.id === valori.id ? { ...r, ...valori, ...campiModifica(nome) } as T : r))
+      if (esistente) { const u = sostituisciUnendo(rec, valori.id as string, valori as Partial<T>, iniziale as Partial<T>, nome); esito = u.esito; return u.record }
       return [...rec, { ...p.vuotoNuovo, ...valori, ...nuovi } as T]
     }, `${nome}: ${esistente ? 'modifica' : 'nuovo'} ${p.singolare} ${p.descrivi(valori as T)}`)
+    avvisa(descriviUnione(esito, etichetteDi(p.campi(dati))))
     if (p.dopoSalva) await p.dopoSalva((valori.id as string) ?? nuovi!.id, tutti as Record<string, unknown>)
     setAperto(null)
   }

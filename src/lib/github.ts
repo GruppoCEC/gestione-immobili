@@ -16,16 +16,30 @@ export const TOKEN_DEMO = 'DEMO'
 export const MODO_DEMO = import.meta.env.VITE_DEMO === '1' || Object.keys(CONFIG.tokenCifrato.utenti ?? {}).length === 0
 const PREFISSO_DEMO = 'gestione-immobili.demo.'
 
+/** "SHA" di un file in modalità prova: impronta del contenuto (cambia a ogni modifica, come su GitHub). */
+function impronta(testo: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < testo.length; i++) { h ^= testo.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return `demo-${h.toString(16)}-${testo.length}`
+}
+function demoCommits(): Commit[] {
+  return JSON.parse(localStorage.getItem(PREFISSO_DEMO + '_commits') ?? '[]') as Commit[]
+}
 function demoLeggi(percorso: string): FileLetto | null {
   const raw = localStorage.getItem(PREFISSO_DEMO + percorso)
-  return raw ? { contenuto: raw, sha: String(raw.length) + ':' + percorso } : null
+  return raw ? { contenuto: raw, sha: impronta(raw) } : null
 }
-function demoScrivi(percorso: string, contenuto: string, messaggio: string): string {
+function demoScrivi(percorso: string, contenuto: string, messaggio: string, sha?: string): string {
+  // Come GitHub: se il file è cambiato dopo la lettura (salvataggio di un'altra scheda del browser) è un conflitto
+  const attuale = localStorage.getItem(PREFISSO_DEMO + percorso)
+  if (sha !== undefined && attuale !== null && impronta(attuale) !== sha) {
+    throw new ErroreGitHub(messaggioPerStato(409), 409, true)
+  }
   localStorage.setItem(PREFISSO_DEMO + percorso, contenuto)
-  const commits = JSON.parse(localStorage.getItem(PREFISSO_DEMO + '_commits') ?? '[]') as Commit[]
-  commits.unshift({ sha: crypto.randomUUID(), messaggio, data: new Date().toISOString(), autore: messaggio.split(':')[0] })
+  const commits = demoCommits()
+  commits.unshift({ sha: crypto.randomUUID(), messaggio, data: new Date().toISOString(), autore: messaggio.split(':')[0], percorsi: [percorso] })
   localStorage.setItem(PREFISSO_DEMO + '_commits', JSON.stringify(commits.slice(0, 200)))
-  return String(contenuto.length) + ':' + percorso
+  return impronta(contenuto)
 }
 
 export class ErroreGitHub extends Error {
@@ -49,6 +63,7 @@ export interface Commit {
   messaggio: string
   data: string
   autore: string
+  percorsi?: string[]   // solo in modalità prova: file toccati dal salvataggio
 }
 
 function base(): string {
@@ -119,12 +134,12 @@ function codificaBase64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
-/** Legge un file di testo (JSON) con il suo SHA. Restituisce null se non esiste. */
-export async function leggiFile(token: string, percorso: string): Promise<FileLetto | null> {
+/** Legge un file di testo (JSON) con il suo SHA (al ramo dei dati o a un commit preciso). Null se non esiste. */
+export async function leggiFile(token: string, percorso: string, ref: string = CONFIG.ramo): Promise<FileLetto | null> {
   if (token === TOKEN_DEMO) return demoLeggi(percorso)
   let r: Response
   try {
-    r = await richiesta(token, `/contents/${percorso}?ref=${CONFIG.ramo}`)
+    r = await richiesta(token, `/contents/${percorso}?ref=${ref}`)
   } catch (e) {
     if (e instanceof ErroreGitHub && e.stato === 404) return null
     throw e
@@ -144,7 +159,7 @@ export async function leggiFile(token: string, percorso: string): Promise<FileLe
  * con `conflitto = true`.
  */
 export async function scriviFile(token: string, percorso: string, contenuto: string, messaggio: string, sha?: string): Promise<string> {
-  if (token === TOKEN_DEMO) return demoScrivi(percorso, contenuto, messaggio)
+  if (token === TOKEN_DEMO) return demoScrivi(percorso, contenuto, messaggio, sha)
   const corpo = {
     message: messaggio,
     content: codificaBase64(new TextEncoder().encode(contenuto)),
@@ -231,4 +246,141 @@ export async function spazioRepository(token: string): Promise<SpazioOccupato> {
   const r = await richiesta(token, '')
   const { size } = (await r.json()) as { size: number }   // in KB
   return { fonte: 'github', usato_byte: size * 1024, limite_byte: 1024 * 1024 * 1024 }
+}
+
+/* ---------------------------- salvataggi dei colleghi ---------------------------- */
+
+/** SHA dell'ultimo salvataggio sul ramo dei dati (una richiesta leggera): se cambia, qualcuno ha salvato. */
+export async function ultimoCommit(token: string): Promise<string> {
+  if (token === TOKEN_DEMO) return demoCommits()[0]?.sha ?? ''
+  const r = await richiesta(token, `/git/ref/heads/${CONFIG.ramo}`)
+  return ((await r.json()) as { object: { sha: string } }).object.sha
+}
+
+export interface Cambiamenti {
+  file: Array<{ percorso: string; sha: string | null }>   // sha null = file eliminato
+  messaggi: string[]                                       // messaggi dei salvataggi ("Nome: azione"), dal più vecchio
+}
+
+/**
+ * File cambiati e messaggi dei salvataggi tra due commit. Lancia un errore se il confronto non è possibile
+ * (es. storia riscritta con la compattazione): chi chiama ricarica tutto.
+ */
+export async function cambiamentiTra(token: string, da: string, a: string): Promise<Cambiamenti> {
+  if (token === TOKEN_DEMO) {
+    const tutti = demoCommits()
+    const i = da ? tutti.findIndex((c) => c.sha === da) : tutti.length
+    if (i < 0) throw new ErroreGitHub('Storico non confrontabile.', 0)
+    const nuovi = tutti.slice(0, i).reverse()
+    const percorsi = [...new Set(nuovi.flatMap((c) => c.percorsi ?? []))]
+    return { file: percorsi.map((p) => ({ percorso: p, sha: demoLeggi(p)?.sha ?? null })), messaggi: nuovi.map((c) => c.messaggio) }
+  }
+  const r = await richiesta(token, `/compare/${da}...${a}`)
+  const d = (await r.json()) as { files?: Array<{ filename: string; sha: string | null; status: string }>; commits: Array<{ commit: { message: string } }> }
+  return {
+    file: (d.files ?? []).map((f) => ({ percorso: f.filename, sha: f.status === 'removed' ? null : f.sha })),
+    messaggi: d.commits.map((c) => c.commit.message.split('\n')[0]),
+  }
+}
+
+/* ---------------------------- salvataggio di più file in un solo commit ---------------------------- */
+
+/** Una modifica a un file: nuovo testo, nuovo file binario (allegato) o eliminazione. */
+export type ModificaFile =
+  | { percorso: string; testo: string }
+  | { percorso: string; binario: Blob }
+  | { percorso: string; elimina: true }
+
+/** Vero se il file esiste al commit indicato. */
+async function leggiMeta(token: string, percorso: string, ref: string): Promise<boolean> {
+  try { await richiesta(token, `/contents/${percorso}?ref=${ref}`); return true } catch (e) { if (e instanceof ErroreGitHub && e.stato === 404) return false; throw e }
+}
+
+/** Ultimo commit del ramo dei dati e il suo albero dei file. */
+export interface TestaRamo { commit: string; albero: string }
+
+export async function testaRamo(token: string): Promise<TestaRamo> {
+  if (token === TOKEN_DEMO) return { commit: demoCommits()[0]?.sha ?? '', albero: '' }
+  const commit = await ultimoCommit(token)
+  const c = await richiesta(token, `/git/commits/${commit}`)
+  return { commit, albero: ((await c.json()) as { tree: { sha: string } }).tree.sha }
+}
+
+/** SHA che GitHub assegna a un file con questo contenuto (per aggiornare la memoria senza rileggere). */
+export async function shaGit(bytes: Uint8Array): Promise<string> {
+  const intestazione = new TextEncoder().encode(`blob ${bytes.length}\0`)
+  const tutto = new Uint8Array(intestazione.length + bytes.length)
+  tutto.set(intestazione); tutto.set(bytes, intestazione.length)
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-1', tutto))
+  return [...digest].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export interface EsitoCommit {
+  sha: Map<string, string | null>   // nuovo SHA di ogni file scritto (null = eliminato)
+  mancanti: string[]                // file da eliminare che non c'erano già più
+}
+
+/**
+ * Scrive tutte le modifiche in UN SOLO commit sopra `base` (tutto o niente). Se nel frattempo qualcuno ha salvato
+ * (il ramo non è più a `base`) lancia un ErroreGitHub con conflitto = true: chi chiama rilegge e riprova.
+ */
+export async function scriviCommit(token: string, base: TestaRamo, modifiche: ModificaFile[], messaggio: string): Promise<EsitoCommit> {
+  const sha = new Map<string, string | null>()
+  const mancanti: string[] = []
+  if (token === TOKEN_DEMO) {
+    if ((demoCommits()[0]?.sha ?? '') !== base.commit) throw new ErroreGitHub(messaggioPerStato(409), 409, true)
+    for (const m of modifiche) {
+      if ('elimina' in m) {
+        if (localStorage.getItem(PREFISSO_DEMO + m.percorso) === null) mancanti.push(m.percorso)
+        localStorage.removeItem(PREFISSO_DEMO + m.percorso); sha.set(m.percorso, null)
+      } else {
+        const contenuto = 'testo' in m ? m.testo : 'data:' + m.binario.type + ';base64,' + codificaBase64(new Uint8Array(await m.binario.arrayBuffer()))
+        localStorage.setItem(PREFISSO_DEMO + m.percorso, contenuto); sha.set(m.percorso, impronta(contenuto))
+      }
+    }
+    const commits = demoCommits()
+    commits.unshift({ sha: crypto.randomUUID(), messaggio, data: new Date().toISOString(), autore: messaggio.split(':')[0], percorsi: modifiche.map((m) => m.percorso) })
+    localStorage.setItem(PREFISSO_DEMO + '_commits', JSON.stringify(commits.slice(0, 200)))
+    return { sha, mancanti }
+  }
+
+  // Le eliminazioni di file già assenti farebbero fallire tutto: si controlla prima quali file esistono
+  let esistenti: Set<string> | null = null
+  if (modifiche.some((m) => 'elimina' in m)) {
+    const t = await richiesta(token, `/git/trees/${base.albero}?recursive=1`)
+    const albero = (await t.json()) as { tree: Array<{ path: string }>; truncated?: boolean }
+    esistenti = new Set(albero.tree.map((x) => x.path))
+    if (albero.truncated) {
+      // Elenco incompleto (repository enorme): si controlla un file alla volta
+      for (const m of modifiche) if ('elimina' in m && !esistenti.has(m.percorso) && await leggiMeta(token, m.percorso, base.commit)) esistenti.add(m.percorso)
+    }
+  }
+  const voci: Array<Record<string, unknown>> = []
+  for (const m of modifiche) {
+    if ('elimina' in m) {
+      if (!esistenti?.has(m.percorso)) { mancanti.push(m.percorso); continue }
+      voci.push({ path: m.percorso, mode: '100644', type: 'blob', sha: null }); sha.set(m.percorso, null)
+    } else if ('testo' in m) {
+      voci.push({ path: m.percorso, mode: '100644', type: 'blob', content: m.testo })
+      sha.set(m.percorso, await shaGit(new TextEncoder().encode(m.testo)))
+    } else {
+      const bytes = new Uint8Array(await m.binario.arrayBuffer())
+      const b = await richiesta(token, '/git/blobs', { method: 'POST', body: JSON.stringify({ content: codificaBase64(bytes), encoding: 'base64' }) })
+      const blobSha = ((await b.json()) as { sha: string }).sha
+      voci.push({ path: m.percorso, mode: '100644', type: 'blob', sha: blobSha }); sha.set(m.percorso, blobSha)
+    }
+  }
+  if (!voci.length) return { sha, mancanti }
+  const t = await richiesta(token, '/git/trees', { method: 'POST', body: JSON.stringify({ base_tree: base.albero, tree: voci }) })
+  const albero = ((await t.json()) as { sha: string }).sha
+  const c = await richiesta(token, '/git/commits', { method: 'POST', body: JSON.stringify({ message: messaggio, tree: albero, parents: [base.commit] }) })
+  const commit = ((await c.json()) as { sha: string }).sha
+  try {
+    await richiesta(token, `/git/refs/heads/${CONFIG.ramo}`, { method: 'PATCH', body: JSON.stringify({ sha: commit, force: false }) })
+  } catch (e) {
+    // "not a fast forward": un collega ha salvato dopo la lettura → conflitto, si riprova sui dati aggiornati
+    if (e instanceof ErroreGitHub && e.stato === 422) throw new ErroreGitHub(messaggioPerStato(409), 409, true)
+    throw e
+  }
+  return { sha, mancanti }
 }

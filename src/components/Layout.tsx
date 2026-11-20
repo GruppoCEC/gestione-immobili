@@ -9,7 +9,8 @@ import { giorniAllaScadenza } from '../lib/auth'
 import { CONFIG } from '../config'
 import { MODO_DEMO } from '../lib/github'
 import logo from '../assets/logo-gruppo.png'
-import { Avviso, Crocette } from './ui'
+import { Avviso, Crocette, Notifica } from './ui'
+import { useAggiornamentiAutomatici, useAvviso } from '../lib/aggiornamenti'
 
 const VOCI = [
   { a: '/', testo: 'Dashboard', Icona: Home },
@@ -42,6 +43,9 @@ export default function Layout({ children }: { children: ReactNode }) {
   const [aperto, setAperto] = useState(false)
   const giorni = giorniAllaScadenza(sessione?.scadenzaToken ?? null)
   const avvisoToken = giorni !== null && giorni <= CONFIG.avvisoScadenzaTokenGiorni
+  // Si accorge dei salvataggi dei colleghi e aggiorna le schermate (ogni minuto e al ritorno sulla scheda)
+  useAggiornamentiAutomatici(sessione?.token ?? '', sessione?.nome ?? '')
+  const [avvisoBreve, chiudiAvviso] = useAvviso()
 
   function esciEVai() { esci(); navigate('/login') }
 
@@ -114,6 +118,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {children}
         </div>
       </main>
+      {avvisoBreve && <Notifica testo={avvisoBreve} onChiudi={chiudiAvviso} />}
     </div>
   )
 }

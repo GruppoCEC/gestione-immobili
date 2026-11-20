@@ -8,14 +8,15 @@ import { FileSpreadsheet, Plus } from 'lucide-react'
 import { righeDaCampi, scaricaExcel } from '../lib/esporta'
 import { SoloSeModifica } from '../components/SoloLettura'
 import Allegati from '../components/Allegati'
-import Modulo, { type CampoDef } from '../components/Modulo'
+import Modulo, { etichetteDi, type CampoDef } from '../components/Modulo'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, Gruppo, IntestazionePagina, Riquadro, Segmentato, Tabella, TavolaKpi, filtraTesto } from '../components/ui'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
+import { aggiorna, aggiornaInsieme, attivi, campiModifica, campiNuovo, descriviUnione, passo, sostituisciUnendo, type EsitoUnione } from '../lib/store'
 import { A_CARICO, PERIODICITA_PIANO, SI_NO, STATI_PIANO, TIPI_VOCE_CONDOMINIO, etichettaDi, type Condominio, type Conduttore, type Contratto, type Immobile, type PianoRientro, type Societa, type VoceCondominiale } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { aggiungiMesi, formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
 import { aggiungiGiorni } from '../lib/utils/date'
+import { avvisa } from '../lib/aggiornamenti'
 
 /** Aggiunge giorni a una data ISO */
 
@@ -83,10 +84,12 @@ export default function PaginaCondominio() {
   async function salva(v: Partial<VoceCondominiale>) {
     const esistente = !!v.id
     const imm = immobili.find((i) => i.id === v.immobile_id)
-    await aggiorna<VoceCondominiale>(token, 'voci_condominiali', (r) => esistente
-      ? r.map((x) => (x.id === v.id ? { ...x, ...v, ...campiModifica(nome) } as VoceCondominiale : x))
-      : [...r, { ...nuova(), ...v, ...campiNuovo(nome) } as VoceCondominiale],
-    `${nome}: ${esistente ? 'modifica' : 'nuova'} voce condominiale "${v.descrizione || etichettaDi(TIPI_VOCE_CONDOMINIO, v.tipo)}" — ${imm?.indirizzo ?? ''}`)
+    let esito: EsitoUnione | null = null
+    await aggiorna<VoceCondominiale>(token, 'voci_condominiali', (r) => {
+      if (!esistente) return [...r, { ...nuova(), ...v, ...campiNuovo(nome) } as VoceCondominiale]
+      const u = sostituisciUnendo(r, v.id!, v, aperta ?? {}, nome); esito = u.esito; return u.record
+    }, `${nome}: ${esistente ? 'modifica' : 'nuova'} voce condominiale "${v.descrizione || etichettaDi(TIPI_VOCE_CONDOMINIO, v.tipo)}" — ${imm?.indirizzo ?? ''}`)
+    avvisa(descriviUnione(esito, etichetteDi(campi)))
     setAperta(null)
   }
   async function elimina() {
@@ -167,15 +170,18 @@ export default function PaginaCondominio() {
     const imm = immobili.find((i) => i.id === v.immobile_id)
     const nuovi = esistente ? null : campiNuovo(nome)
     const pianoId = (v.id as string) ?? nuovi!.id
-    await aggiorna<PianoRientro>(token, 'piani_rientro', (r) => esistente
-      ? r.map((x) => (x.id === v.id ? { ...x, ...v, ...campiModifica(nome) } as PianoRientro : x))
-      : [...r, { ...nuovoPiano(v.immobile_id ?? ''), ...v, ...nuovi } as PianoRientro],
-    `${nome}: ${esistente ? 'modifica' : 'nuovo'} piano di rientro ${imm?.indirizzo ?? ''} del ${formattaData(v.data_accordo)}`)
-    // Segna i bollettini inclusi; alla prima creazione genera anche le rate del piano
-    const passo = v.periodicita === 'trimestrale' ? 3 : v.periodicita === 'bimestrale' ? 2 : 1
+    let esitoPiano: EsitoUnione | null = null
+    const mesiTraRate = v.periodicita === 'trimestrale' ? 3 : v.periodicita === 'bimestrale' ? 2 : 1
     const n = v.numero_rate ?? 0, tot = v.importo_totale_cent ?? 0, rata = v.importo_rata_cent ?? Math.round(tot / Math.max(n, 1))
     const concluso = v.stato === 'concluso'
-    await aggiorna<VoceCondominiale>(token, 'voci_condominiali', (r) => {
+    // Piano, bollettini inclusi e rate del piano in UN SOLO salvataggio (tutto o niente)
+    await aggiornaInsieme(token, [
+      passo<PianoRientro>('piani_rientro', (r) => {
+        if (!esistente) return [...r.filter((x) => x.id !== pianoId), { ...nuovoPiano(v.immobile_id ?? ''), ...v, ...nuovi } as PianoRientro]
+        const u = sostituisciUnendo(r, v.id!, v, pianoAperto ?? {}, nome); esitoPiano = u.esito; return u.record
+      }),
+      // Segna i bollettini inclusi; alla prima creazione genera anche le rate del piano
+      passo<VoceCondominiale>('voci_condominiali', (r) => {
       let out = r.map((x) => {
         const inclusa = (v.voci_ids ?? []).includes(x.id)
         if (inclusa && x.in_piano_id !== pianoId) return { ...x, in_piano_id: pianoId, ...campiModifica(nome) }
@@ -190,20 +196,24 @@ export default function PaginaCondominio() {
         const rate: VoceCondominiale[] = Array.from({ length: n }, (_, i) => ({
           ...campiNuovo(nome), immobile_id: v.immobile_id ?? '', condominio_id: v.condominio_id ?? imm?.condominio_id ?? '', esercizio: (v.prima_scadenza ?? oggi).slice(0, 4),
           tipo: 'rata_piano', descrizione: `Rata ${i + 1}/${n} piano di rientro del ${formattaData(v.data_accordo)}`, data_comunicazione: v.data_accordo ?? '',
-          scadenza: aggiungiMesi(v.prima_scadenza ?? oggi, i * passo), importo_cent: i === n - 1 ? tot - rata * (n - 1) : rata,
+          scadenza: aggiungiMesi(v.prima_scadenza ?? oggi, i * mesiTraRate), importo_cent: i === n - 1 ? tot - rata * (n - 1) : rata,
           a_carico: 'proprieta', quota_conduttore_cent: 0, pagata: 'no', data_pagamento: '', riaddebitata: 'no', data_riaddebito: '', piano_id: pianoId, in_piano_id: '', note: '',
         }))
         out = [...out, ...rate]
       }
       return out
-    }, `${nome}: ${esistente ? 'aggiorna' : 'genera'} rate del piano di rientro ${imm?.indirizzo ?? ''}`)
+      }),
+    ], `${nome}: ${esistente ? 'modifica' : 'nuovo'} piano di rientro ${imm?.indirizzo ?? ''} del ${formattaData(v.data_accordo)}`)
+    avvisa(descriviUnione(esitoPiano, etichetteDi(campiPiano(v.immobile_id ?? ''))))
     setPianoAperto(null); setImmobilePiano('')
   }
   async function eliminaPiano() {
     if (!pianoAperto?.id) return
     const id = pianoAperto.id
-    await aggiorna<PianoRientro>(token, 'piani_rientro', (r) => r.map((x) => (x.id === id ? { ...x, eliminato_il: new Date().toISOString(), ...campiModifica(nome) } : x)), `${nome}: elimina piano di rientro`)
-    await aggiorna<VoceCondominiale>(token, 'voci_condominiali', (r) => r.map((x) => x.in_piano_id === id ? { ...x, in_piano_id: '' } : x.piano_id === id && x.pagata !== 'si' ? { ...x, eliminato_il: new Date().toISOString(), ...campiModifica(nome) } : x), `${nome}: rimuove le rate non pagate del piano eliminato`)
+    await aggiornaInsieme(token, [
+      passo<PianoRientro>('piani_rientro', (r) => r.map((x) => (x.id === id ? { ...x, eliminato_il: new Date().toISOString(), ...campiModifica(nome) } : x))),
+      passo<VoceCondominiale>('voci_condominiali', (r) => r.map((x) => x.in_piano_id === id ? { ...x, in_piano_id: '' } : x.piano_id === id && x.pagata !== 'si' ? { ...x, eliminato_il: new Date().toISOString(), ...campiModifica(nome) } : x)),
+    ], `${nome}: elimina piano di rientro e le sue rate non pagate`)
     setPianoAperto(null)
   }
   const livelloTono = (l: 'ok' | 'attenzione' | 'critico') => (l === 'critico' ? 'rosso' : l === 'attenzione' ? 'giallo' : 'verde')

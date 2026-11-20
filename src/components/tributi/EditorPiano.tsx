@@ -12,7 +12,7 @@ import { contribuenteNelTesto, normalizzaNome, vuotaPratica, vuotoContribuente }
 import { leggiPdfRateizzo, type PianoPdf } from '../../lib/pdfRateizzo'
 import { calcolaRate, decorrenzaDaElaborazione, dividiQuota, rateDaPdf } from '../../lib/rateTributi'
 import { useSessioneAttiva } from '../../lib/sessione'
-import { aggiorna, campiModifica } from '../../lib/store'
+import { aggiorna, aggiornaInsieme, campiModifica, passo } from '../../lib/store'
 import { TIPI_PRATICA, etichettaDi, type Contribuente, type PraticaTributo, type RataTributo } from '../../lib/tipi'
 import { aggiungiGiorni } from '../../lib/ravvedimento'
 import { formattaData, formattaEuro, oggiIso } from '../../lib/utils/formato'
@@ -169,10 +169,12 @@ export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche
     if (rate.some((r) => !r.scadenza || r.totale_cent <= 0)) { setErrore('Ogni rata deve avere scadenza e importo.'); return }
     setInCorso('Salvataggio…')
     try {
+      // Nuova società: si salva insieme al piano (un solo salvataggio, mai una società senza il suo piano)
+      let nuovaSocieta: Contribuente | null = null
       if (cid === NUOVA) {
         const c = vuotoContribuente(nome, nuovaSoc.nome.trim())
         c.responsabile = nuovaSoc.responsabile.trim(); c.email = nuovaSoc.email.trim(); c.ragione_sociale = nuovaSoc.ragione_sociale.trim()
-        await aggiorna<Contribuente>(token, 'contribuenti', (rec) => [...rec, c], `${nome}: nuova società tributi ${c.nome}`)
+        nuovaSocieta = c
         cid = c.id
       }
       const ordinate = [...rate].sort((a, b) => a.scadenza.localeCompare(b.scadenza)).map((r, k) => ({ ...r, numero: k + 1 }))
@@ -188,8 +190,14 @@ export default function EditorPiano({ base: baseIniziale, contribuenti, pratiche
         ...(base ? campiModifica(nome) : {}),
       }
       const nomeSoc = cid === contribuenteId ? nomeDi(cid) : nuovaSoc.nome.trim()
-      await aggiorna<PraticaTributo>(token, 'pratiche_tributi', (rec) => (base ? rec.map((p) => (p.id === base.id ? record : p)) : [...rec, record]),
-        `${nome}: ${base ? (baseIniziale ? 'modifica' : 'inserisce') : 'nuovo'} piano ${nomeSoc} ${record.tributo}`)
+      const modificaPiani = (rec: PraticaTributo[]) => (base ? rec.map((p) => (p.id === base.id ? record : p)) : [...rec.filter((p) => p.id !== record.id), record])
+      const messaggio = `${nome}: ${base ? (baseIniziale ? 'modifica' : 'inserisce') : 'nuovo'} piano ${nomeSoc} ${record.tributo}`
+      if (nuovaSocieta) {
+        const c = nuovaSocieta
+        await aggiornaInsieme(token, [passo<Contribuente>('contribuenti', (rec) => [...rec.filter((x) => x.id !== c.id), c]), passo<PraticaTributo>('pratiche_tributi', modificaPiani)], `${messaggio} (nuova società)`)
+      } else {
+        await aggiorna<PraticaTributo>(token, 'pratiche_tributi', modificaPiani, messaggio)
+      }
       onSalvato(record.id)
     } catch (e) { setErrore((e as Error).message) } finally { setInCorso(null) }
   }

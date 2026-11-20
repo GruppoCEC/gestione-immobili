@@ -7,7 +7,7 @@ import { FileText, Plus, Receipt } from 'lucide-react'
 import { useSessioneAttiva, useUtente } from '../lib/sessione'
 import { puoVedere } from '../lib/permessi'
 import { FinestraF24, FinestraLetteraIstat } from './Documenti'
-import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
+import { aggiorna, aggiornaInsieme, attivi, campiModifica, campiNuovo, descriviUnione, passo, sostituisciUnendo, type EsitoUnione } from '../lib/store'
 import { inizioAnnualita, regoleImposta } from '../lib/imposta'
 import { adeguaCanoniRegistrati } from '../lib/canone'
 import { SI_NO, TIPI_COMUNICAZIONE, TIPOLOGIE_CONTRATTO, etichettaDi, inCedolare, statoIva, type Allegato, type Comunicazione, type Annualita, type Conduttore, type Contratto, type Immobile, type Movimento, type Opzione, type Societa } from '../lib/tipi'
@@ -15,8 +15,9 @@ import { useCollezioni } from '../lib/useCollezioni'
 import { formattaData, formattaEuro } from '../lib/utils/formato'
 import Allegati from './Allegati'
 import { SoloSeModifica } from './SoloLettura'
-import Modulo, { type CampoDef } from './Modulo'
+import Modulo, { etichetteDi, type CampoDef } from './Modulo'
 import { Avviso, Bottone, Etichetta, Finestra, Tabella } from './ui'
+import { avvisa } from '../lib/aggiornamenti'
 
 const MODALITA_PAGAMENTO: Opzione[] = [
   { valore: 'f24_elide', etichetta: 'F24 Elide (cod. 1501)' }, { valore: 'rli', etichetta: 'RLI (addebito in conto)' }, { valore: 'altro', etichetta: 'Altro' },
@@ -79,7 +80,6 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
   const [aperta, setAperta] = useState<Partial<Annualita> | null>(null)
   const [adeguati, setAdeguati] = useState<{ anno: number; mesi: string[]; importo: number | null } | null>(null)
 
-  const movimenti = dati<Movimento>('movimenti')
   const righe = attivi(dati<Annualita>('annualita')).filter((a) => a.contratto_id === contratto.id).sort((a, b) => a.anno - b.anno)
 
   function nuova(): Partial<Annualita> {
@@ -137,32 +137,41 @@ export default function RegistroAnnuale({ contratto, descrizione }: Props) {
     const esistente = !!v.id
     const prima = righe.find((x) => x.id === v.id)
     const nuovoRecord = esistente ? null : { ...nuova(), ...v, ...campiNuovo(nome) } as Annualita
-    const tutte = await aggiorna<Annualita>(token, 'annualita', (r) => esistente
-      ? r.map((x) => (x.id === v.id ? { ...x, ...v, ...campiModifica(nome) } as Annualita : x))
-      : [...r, nuovoRecord!],
-    `${nome}: ${esistente ? 'modifica' : 'nuova'} annualità ${v.anno} di ${descrizione}`)
-    // Canone cambiato: i mesi già registrati da questa annualità in poi passano al nuovo importo
-    const salvata = tutte.find((x) => x.id === (v.id ?? nuovoRecord!.id))
-    if (salvata) {
-      const vecchi = [salvata.canone_mensile_precedente_cent, prima?.canone_mensile_precedente_cent, prima?.canone_mensile_nuovo_cent]
-      let mesi: string[] = []
-      if (adeguaCanoniRegistrati(movimenti, salvata, tutte, vecchi, campiModifica(nome)).mesi.length) {
-        await aggiorna<Movimento>(token, 'movimenti', (r) => {
-          const esito = adeguaCanoniRegistrati(r, salvata, tutte, vecchi, campiModifica(nome))
-          mesi = esito.mesi
-          return esito.record
-        }, `${nome}: canoni già registrati adeguati all'ISTAT ${salvata.anno} di ${descrizione}`)
-      }
-      setAdeguati(mesi.length ? { anno: salvata.anno, mesi, importo: salvata.canone_mensile_nuovo_cent } : null)
-    }
-    // Il canone della scheda contratto segue solo l'annualità più recente: correggendo un'annualità vecchia
-    // (es. per segnare l'imposta pagata) il canone attuale non deve tornare al valore di quell'anno
-    const piuRecente = !attivi(tutte).some((x) => x.contratto_id === contratto.id && x.id !== salvata?.id && x.anno > (salvata?.anno ?? v.anno ?? 0))
-    if (piuRecente && v.aggiorna_canone === 'si' && v.canone_mensile_nuovo_cent != null && v.canone_mensile_nuovo_cent !== contratto.canone_mensile_cent) {
-      await aggiorna<Contratto>(token, 'contratti', (r) => r.map((c) => (c.id === contratto.id
-        ? { ...c, canone_mensile_cent: v.canone_mensile_nuovo_cent!, canone_annuale_cent: v.canone_mensile_nuovo_cent! * 12, imposta_registro_annuale_cent: cedolare ? c.imposta_registro_annuale_cent : v.quota_conduttore_cent ?? c.imposta_registro_annuale_cent, ...campiModifica(nome) }
-        : c)), `${nome}: aggiorna canone ${descrizione} (ISTAT ${v.anno})`)
-    }
+    const idSalvata = v.id ?? nuovoRecord!.id
+    const vecchi = [v.canone_mensile_precedente_cent, prima?.canone_mensile_precedente_cent, prima?.canone_mensile_nuovo_cent]
+    let esito: EsitoUnione | null = null
+    let mesi: string[] = []
+    let salvata: Annualita | undefined
+    // Annualità, canoni già registrati e canone del contratto in UN SOLO salvataggio (tutto o niente)
+    await aggiornaInsieme(token, [
+      passo<Annualita>('annualita', (r) => {
+        if (!esistente) return [...r.filter((x) => x.id !== idSalvata), nuovoRecord!]
+        const u = sostituisciUnendo(r, v.id!, v, aperta ?? {}, nome); esito = u.esito; return u.record
+      }),
+      // Canone cambiato: i mesi già registrati da questa annualità in poi passano al nuovo importo
+      passo<Movimento>('movimenti', (r, prec) => {
+        const tutte = prec.get('annualita') as Annualita[]
+        salvata = tutte.find((x) => x.id === idSalvata)
+        if (!salvata) { mesi = []; return r }
+        const adeguati = adeguaCanoniRegistrati(r, salvata, tutte, [salvata.canone_mensile_precedente_cent, ...vecchi.slice(1)], campiModifica(nome))
+        mesi = adeguati.mesi
+        return adeguati.mesi.length ? adeguati.record : r
+      }),
+      // Il canone della scheda contratto segue solo l'annualità più recente: correggendo un'annualità vecchia
+      // (es. per segnare l'imposta pagata) il canone attuale non deve tornare al valore di quell'anno
+      passo<Contratto>('contratti', (r, prec) => {
+        const tutte = prec.get('annualita') as Annualita[]
+        const s = tutte.find((x) => x.id === idSalvata)
+        const piuRecente = !attivi(tutte).some((x) => x.contratto_id === contratto.id && x.id !== idSalvata && x.anno > (s?.anno ?? v.anno ?? 0))
+        const attuale = r.find((c) => c.id === contratto.id)
+        if (!attuale || !piuRecente || v.aggiorna_canone !== 'si' || v.canone_mensile_nuovo_cent == null || v.canone_mensile_nuovo_cent === attuale.canone_mensile_cent) return r
+        return r.map((c) => (c.id === contratto.id
+          ? { ...c, canone_mensile_cent: v.canone_mensile_nuovo_cent!, canone_annuale_cent: v.canone_mensile_nuovo_cent! * 12, imposta_registro_annuale_cent: cedolare ? c.imposta_registro_annuale_cent : v.quota_conduttore_cent ?? c.imposta_registro_annuale_cent, ...campiModifica(nome) }
+          : c))
+      }),
+    ], `${nome}: ${esistente ? 'modifica' : 'nuova'} annualità ${v.anno} di ${descrizione}`)
+    setAdeguati(salvata && mesi.length ? { anno: salvata.anno, mesi, importo: salvata.canone_mensile_nuovo_cent } : null)
+    avvisa(descriviUnione(esito, etichetteDi(campi)))
     setAperta(null)
   }
 

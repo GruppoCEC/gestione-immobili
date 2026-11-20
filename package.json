@@ -8,9 +8,10 @@
     "prova": "vite --mode prova --port 5180",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "TZ=Europe/Rome vitest run",
+    "test": "TZ=Europe/Rome vitest run --exclude \"**/*.integrazione.test.ts\"",
     "preview": "vite preview",
-    "cifra-token": "node scripts/cifra-token.mjs"
+    "cifra-token": "node scripts/cifra-token.mjs",
+    "prova-github": "TZ=Europe/Rome vitest run src/lib/github.integrazione.test.ts"
   },
   "dependencies": {
     "fflate": "^0.8.3",

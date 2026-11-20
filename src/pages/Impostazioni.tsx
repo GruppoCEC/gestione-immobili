@@ -3,7 +3,8 @@ import { Download } from 'lucide-react'
 import { Bottone, IntestazionePagina, Riquadro } from '../components/ui'
 import SpazioOccupato from '../components/SpazioOccupato'
 import { esportaConsultazione } from '../lib/esportaCompleto'
-import { creaBackup, ripristinaBackup } from '../lib/backup'
+import { conConteggiAttuali, controllaBackup, creaBackup, ripristinaBackup, type ControlloBackup } from '../lib/backup'
+import { SEZIONI as NOMI_SEZIONI } from '../lib/aggiornamenti'
 import { MODO_DEMO } from '../lib/github'
 import { svuotaCache } from '../lib/store'
 import { useState } from 'react'
@@ -25,16 +26,24 @@ export default function Impostazioni() {
 
   const [esito, setEsito] = useState<string | null>(null)
   const [inCorso, setInCorso] = useState(false)
+  const [controllo, setControllo] = useState<ControlloBackup | null>(null)
   const anno = new Date().getFullYear()
 
   async function esegui(fn: () => Promise<string | void>) {
     setInCorso(true); setEsito(null)
     try { const r = await fn(); if (r) setEsito(r) } catch (e) { setEsito('Errore: ' + (e as Error).message) } finally { setInCorso(false) }
   }
+  /** Prima si controlla il file e si mostra il riepilogo; si scrive solo dopo la conferma. */
   async function ripristina(file: File | undefined) {
     if (!file || !sessione) return
-    if (!window.confirm('ATTENZIONE: il ripristino sostituisce TUTTI i dati attuali con quelli del file di backup. Continuare?')) return
-    await esegui(() => ripristinaBackup(sessione.token, sessione.nome, file))
+    setControllo(null)
+    await esegui(async () => { setControllo(await conConteggiAttuali(sessione.token, controllaBackup(await file.text()))) })
+  }
+  async function confermaRipristino() {
+    if (!controllo || !sessione) return
+    const c = controllo
+    setControllo(null)
+    await esegui(() => ripristinaBackup(sessione.token, sessione.nome, c))
   }
 
   const sessioneBox = (
@@ -71,9 +80,26 @@ export default function Impostazioni() {
             <div className="mt-4 flex flex-wrap gap-2.5">
               <Bottone variante="secondario" disabled={inCorso} onClick={() => sessione && esegui(() => creaBackup(sessione.token, sessione.nome))}>Scarica backup (.json)</Bottone>
               <label className={`btn btn-pericolo ${inCorso ? 'pointer-events-none opacity-45' : ''}`}>
-                Ripristina da backup…<input type="file" accept=".json" className="hidden" disabled={inCorso} onChange={(e) => ripristina(e.target.files?.[0])} />
+                Ripristina da backup…<input type="file" accept=".json" className="hidden" disabled={inCorso} onChange={(e) => { void ripristina(e.target.files?.[0]); e.target.value = '' }} />
               </label>
             </div>
+            {controllo && (
+              <div className="mt-4 border border-err-bordo bg-err-fondo px-4 py-3 text-err-testo">
+                <div className="font-medium">Backup del {formattaDataOra(controllo.backup.creato_il)} creato da {controllo.backup.creato_da}: il file è valido.</div>
+                <p className="mb-2 mt-1">Confermando, queste sezioni verranno <b>sostituite</b> con i dati del backup, in un unico salvataggio (si potrà tornare indietro dallo Storico su GitHub):</p>
+                <table className="mb-2 text-[13px]">
+                  <thead><tr><th className="pr-6 text-left font-medium">Sezione</th><th className="pr-6 text-right font-medium">Nel backup</th><th className="text-right font-medium">Oggi</th></tr></thead>
+                  <tbody>{controllo.righe.map((r) => (
+                    <tr key={r.nome}><td className="pr-6">{NOMI_SEZIONI[r.nome]} <span className="text-neutro-700">({r.nome})</span></td><td className="num pr-6 text-right">{r.nelBackup}</td><td className="num text-right">{r.oggi ?? '—'}</td></tr>
+                  ))}</tbody>
+                </table>
+                {controllo.avvisi.map((a) => <div key={a} className="text-[13px]">{a}</div>)}
+                <div className="mt-3 flex flex-wrap gap-2.5">
+                  <Bottone variante="pericolo" disabled={inCorso} onClick={() => void confermaRipristino()}>Sì, ripristina il backup</Bottone>
+                  <Bottone variante="secondario" disabled={inCorso} onClick={() => setControllo(null)}>Annulla</Bottone>
+                </div>
+              </div>
+            )}
             {esito && <div className="mt-4"><Avviso tipo={esito.startsWith('Errore') ? 'errore' : 'ok'}>{esito}</Avviso></div>}
           </Riquadro>
 

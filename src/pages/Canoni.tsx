@@ -10,15 +10,16 @@ import { Eye, EyeOff, FileSpreadsheet, Plus } from 'lucide-react'
 import { righeDaCampi, scaricaExcel } from '../lib/esporta'
 import { SoloSeModifica } from '../components/SoloLettura'
 import Allegati from '../components/Allegati'
-import Modulo, { type CampoDef } from '../components/Modulo'
+import Modulo, { etichetteDi, type CampoDef } from '../components/Modulo'
 import { Avviso, BarraRicerca, Bottone, Caricamento, Etichetta, Finestra, Gruppo, IntestazionePagina, Riquadro, Segmentato, Tabella, TavolaKpi, filtraTesto } from '../components/ui'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, campiNuovo } from '../lib/store'
+import { aggiorna, attivi, campiModifica, campiNuovo, descriviUnione, sostituisciUnendo, type EsitoUnione } from '../lib/store'
 import { canoneMensilePer, canoneScaduto, descriviCanone, inGrigliaAnno, scadenzaCanone, totaliAnnoContratto, ultimoAumento, type CanoneMese } from '../lib/canone'
 import { MODALITA_INCASSO, STATI_MOVIMENTO, TIPI_MOVIMENTO, etichettaDi, statoIva, type Annualita, type Conduttore, type Contratto, type Immobile, type Movimento, type Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaData, formattaEuro, oggiIso } from '../lib/utils/formato'
 import { MESI_BREVI as MESI, mesiDellAnno } from '../lib/utils/date'
+import { avvisa } from '../lib/aggiornamenti'
 
 const r0 = (n: number) => Math.round(n)
 /** Importo compatto per le celle: "1.220" oppure "1.220,50" */
@@ -105,10 +106,13 @@ export default function PaginaCanoni() {
   async function salva(v: Partial<Movimento>) {
     const esistente = !!v.id
     const d = descrivi(contrattoDi(v.contratto_id ?? ''))
-    await aggiorna<Movimento>(token, 'movimenti', (r) => esistente
-      ? r.map((x) => (x.id === v.id ? { ...x, ...v, ...campiModifica(nome) } as Movimento : x))
-      : [...r, { ...nuovoGenerico(), ...v, ...campiNuovo(nome) } as Movimento],
+    let esito: EsitoUnione | null = null
+    await aggiorna<Movimento>(token, 'movimenti', (r) => {
+      if (!esistente) return [...r, { ...nuovoGenerico(), ...v, ...campiNuovo(nome) } as Movimento]
+      const u = sostituisciUnendo(r, v.id!, v, aperto ?? {}, nome); esito = u.esito; return u.record
+    },
     `${nome}: ${esistente ? 'modifica' : 'nuovo'} ${etichettaDi(TIPI_MOVIMENTO, v.tipo).toLowerCase()} ${v.competenza} — ${d.immobile} / ${d.conduttore}`)
+    avvisa(descriviUnione(esito, etichetteDi(campi)))
     setAperto(null)
   }
   async function elimina() {

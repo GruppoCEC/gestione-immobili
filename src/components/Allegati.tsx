@@ -6,10 +6,10 @@
 import { useRef, useState } from 'react'
 import { FileText, Paperclip, Trash2, Upload } from 'lucide-react'
 import { CONFIG } from '../config'
-import { eliminaFile, scaricaAllegato } from '../lib/github'
-import { controllaDimensione, salvaAllegato } from '../lib/allegati'
+import { scaricaAllegato } from '../lib/github'
+import { controllaDimensione, eliminaAllegati, salvaAllegato } from '../lib/allegati'
 import { useSessioneAttiva } from '../lib/sessione'
-import { aggiorna, attivi, campiModifica, type NomeCollezione } from '../lib/store'
+import { attivi, type NomeCollezione } from '../lib/store'
 import { CATEGORIE_ALLEGATO, etichettaDi, type Allegato, type Opzione } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
 import { formattaByte, formattaData } from '../lib/utils/formato'
@@ -66,10 +66,8 @@ export default function Allegati({ collezione, recordId, categorie = CATEGORIE_A
     if (!window.confirm(`Eliminare l'allegato "${a.nome_file}"?`)) return
     setErrore(null); setInCorso('Eliminazione…')
     try {
-      // Il record resta nello storico (soft delete); il file viene rimosso dal repository per liberare spazio.
-      await aggiorna<Allegato>(token, 'allegati', (r) => r.map((x) => (x.id === a.id ? { ...x, eliminato_il: new Date().toISOString(), ...campiModifica(nome) } : x)),
-        `${nome}: elimina allegato "${a.nome_file}" di ${descrizione}`)
-      try { await eliminaFile(token, a.percorso, '', `${nome}: rimuove file "${a.nome_file}"`) } catch { /* se il file non è più presente va bene comunque */ }
+      // Il record resta nello storico (soft delete); il file viene rimosso dal repository per liberare spazio (un solo salvataggio)
+      await eliminaAllegati(token, nome, [a], `${nome}: elimina allegato "${a.nome_file}" di ${descrizione}`)
     } catch (e) { setErrore((e as Error).message) } finally { setInCorso(null) }
   }
 

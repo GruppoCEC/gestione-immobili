@@ -1,7 +1,7 @@
 /** Salvataggio di un allegato (file nel repository dati + registrazione nella collezione "allegati"). */
 import { CONFIG } from '../config'
-import { MODO_DEMO, caricaAllegato } from './github'
-import { aggiorna, campiNuovo, type NomeCollezione } from './store'
+import { MODO_DEMO } from './github'
+import { aggiornaInsieme, campiModifica, campiNuovo, passo, type NomeCollezione } from './store'
 import type { Allegato } from './tipi'
 import { formattaByte } from './utils/formato'
 
@@ -18,14 +18,29 @@ export function controllaDimensione(file: File): string | null {
   return null
 }
 
-/** Carica il file in allegati/AAAA/<id>-<nome> e lo registra collegato al record indicato. */
+/**
+ * Carica il file in allegati/AAAA/<id>-<nome> e lo registra collegato al record indicato, in un unico salvataggio:
+ * non può restare un file senza registrazione (o una registrazione senza file).
+ */
 export async function salvaAllegato(token: string, nome: string, file: File, collezione: NomeCollezione, recordId: string, categoria: string, descrizione: string): Promise<void> {
   const errore = controllaDimensione(file)
   if (errore) throw new Error(errore)
   const base = campiNuovo(nome)
   const percorso = `allegati/${new Date().getFullYear()}/${base.id.slice(0, 8)}-${nomeSicuro(file.name)}`
-  await caricaAllegato(token, percorso, file, `${nome}: allegato "${file.name}" per ${descrizione}`)
-  await aggiorna<Allegato>(token, 'allegati', (r) => [...r, {
-    ...base, collezione, record_id: recordId, categoria, nome_file: file.name, percorso, dimensione_byte: file.size, tipo_mime: file.type, note: '',
-  }], `${nome}: registra allegato "${file.name}" per ${descrizione}`)
+  const scheda: Allegato = { ...base, collezione, record_id: recordId, categoria, nome_file: file.name, percorso, dimensione_byte: file.size, tipo_mime: file.type, note: '' }
+  await aggiornaInsieme(token, [passo<Allegato>('allegati', (r) => [...r.filter((x) => x.id !== scheda.id), scheda])],
+    `${nome}: allegato "${file.name}" per ${descrizione}`, [{ percorso, binario: file }])
+}
+
+/**
+ * Elimina allegati: le registrazioni restano nello storico (soft delete, con la nota indicata) e i file vengono tolti dal
+ * repository, tutto in un unico salvataggio. Restituisce i file che non c'erano già più.
+ */
+export async function eliminaAllegati(token: string, nome: string, allegati: Allegato[], messaggio: string, nota = ''): Promise<string[]> {
+  const ids = new Set(allegati.map((a) => a.id))
+  const quando = new Date().toISOString()
+  const { esito } = await aggiornaInsieme(token, [passo<Allegato>('allegati', (r) => r.map((x) => (ids.has(x.id) && !x.eliminato_il
+    ? { ...x, eliminato_il: quando, note: [x.note, nota].filter(Boolean).join(' · '), ...campiModifica(nome) } : x)))],
+  messaggio, allegati.filter((a) => a.percorso).map((a) => ({ percorso: a.percorso, elimina: true as const })))
+  return esito.mancanti
 }
