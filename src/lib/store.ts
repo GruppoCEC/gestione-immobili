@@ -13,6 +13,7 @@ import { ErroreGitHub, leggiFile, scriviCommit, scriviFile, testaRamo, type Esit
 export const NOMI_COLLEZIONI = [
   'societa', 'immobili', 'conduttori', 'condomini', 'contratti', 'annualita', 'movimenti', 'voci_condominiali', 'piani_rientro',
   'allegati', 'comunicazioni', 'tassi_legali', 'contribuenti', 'pratiche_tributi', 'fatture_fornitori',
+  'veicoli', 'multe_veicoli',
 ] as const
 export type NomeCollezione = typeof NOMI_COLLEZIONI[number]
 

@@ -446,3 +446,117 @@ export interface FatturaFornitore extends RecordBase {
   pagata_il: string
   note: string
 }
+
+/* ====================== Flotta aziendale ====================== */
+// Vetture delle società (intestatarie = uffici dei tributi, collezione `contribuenti`), attuali e passate.
+
+export type Possesso = 'proprieta' | 'leasing' | 'noleggio'
+export type StatoVeicolo = 'in_uso' | 'venduta' | 'restituita' | 'altro'
+export type TipoScadenza = 'bollo' | 'revisione' | 'assicurazione' | 'tagliando' | 'altro'
+
+export const POSSESSI: Opzione[] = [
+  { valore: 'proprieta', etichetta: 'Proprietà' }, { valore: 'leasing', etichetta: 'Leasing' }, { valore: 'noleggio', etichetta: 'Noleggio a lungo termine' },
+]
+export const STATI_VEICOLO: Opzione[] = [
+  { valore: 'in_uso', etichetta: 'In uso' }, { valore: 'venduta', etichetta: 'Venduta' }, { valore: 'restituita', etichetta: 'Restituita' },
+  { valore: 'altro', etichetta: 'Altro (rottamata, rubata…)' },
+]
+export const TIPI_SCADENZA: Opzione[] = [
+  { valore: 'bollo', etichetta: 'Bollo' }, { valore: 'revisione', etichetta: 'Revisione' }, { valore: 'assicurazione', etichetta: 'Assicurazione RCA' },
+  { valore: 'tagliando', etichetta: 'Tagliando' }, { valore: 'altro', etichetta: 'Altro' },
+]
+export const TIPI_COPERTURA: Opzione[] = [
+  { valore: 'kasko', etichetta: 'Kasko' }, { valore: 'furto_incendio', etichetta: 'Furto e incendio' }, { valore: 'cristalli', etichetta: 'Cristalli' },
+  { valore: 'eventi_naturali', etichetta: 'Eventi naturali' }, { valore: 'infortuni', etichetta: 'Infortuni conducente' },
+  { valore: 'assistenza', etichetta: 'Assistenza stradale' }, { valore: 'tutela_legale', etichetta: 'Tutela legale' }, { valore: 'gap', etichetta: 'GAP' },
+  { valore: 'manutenzione', etichetta: 'Manutenzione inclusa' }, { valore: 'pneumatici', etichetta: 'Pneumatici' },
+  { valore: 'auto_sostitutiva', etichetta: 'Auto sostitutiva' }, { valore: 'garanzia_estesa', etichetta: 'Garanzia estesa' }, { valore: 'altro', etichetta: 'Altro' },
+]
+export const TIPI_MULTA: Opzione[] = [
+  { valore: 'multa', etichetta: 'Multa' }, { valore: 'cartella_bollo', etichetta: 'Cartella bollo' }, { valore: 'altro', etichetta: 'Altro (ZTL, pedaggio, rinotifica…)' },
+]
+export const STATI_MULTA: Opzione[] = [
+  { valore: 'da_pagare', etichetta: 'Da pagare' }, { valore: 'pagata', etichetta: 'Pagata' }, { valore: 'contestata', etichetta: 'Contestata' },
+  { valore: 'girata', etichetta: 'Girata (acquirente / conducente)' }, { valore: 'annullata', etichetta: 'Annullata' },
+]
+export const CATEGORIE_ALLEGATO_FLOTTA: Opzione[] = [
+  { valore: 'libretto', etichetta: 'Libretto di circolazione' }, { valore: 'polizza', etichetta: 'Polizza assicurativa' },
+  { valore: 'contratto_veicolo', etichetta: 'Contratto leasing / noleggio' }, { valore: 'verbale', etichetta: 'Verbale di multa' },
+  { valore: 'cartella', etichetta: 'Cartella / avviso bollo' }, { valore: 'ricevuta', etichetta: 'Ricevuta di pagamento' }, { valore: 'altro', etichetta: 'Altro' },
+]
+
+/** Periodo in cui la vettura è intestata a una società. `dal` vuoto = data non nota (valida da sempre); `al` vuoto = ancora oggi. */
+export interface Intestazione { contribuente_id: string; intestatario_testo: string; dal: string; al: string }
+export interface Conducente { nome: string; dal: string; al: string }
+export interface LetturaKm { data: string; km: number; note: string }
+export interface Copertura { id: string; tipo: string; fornitore: string; numero: string; scadenza: string; note: string }
+export interface EsecuzioneScadenza { data_fatto: string; scadenza_coperta: string; importo_cent: number | null; note: string }
+export interface ScadenzaVeicolo {
+  id: string
+  tipo: TipoScadenza
+  descrizione: string
+  scadenza: string
+  importo_cent: number | null
+  non_dovuta: string            // '' = dovuta; altrimenti il motivo ("esente fino al 2025", "pagato dal noleggio")
+  rinnovo_mesi: number | null   // solo tipo 'altro'
+  superbollo_cent?: number | null
+  compagnia?: string
+  numero_polizza?: string
+  entro_km?: string
+  storico: EsecuzioneScadenza[]
+}
+export interface ContrattoVeicolo {
+  societa_finanziaria: string
+  numero: string
+  decorrenza: string
+  scadenza: string
+  canone_mensile_cent: number | null
+  anticipo_cent: number | null
+  riscatto_cent: number | null
+  km_inclusi: number | null
+  bollo_incluso: 'si' | 'no' | ''
+  assicurazione_inclusa: 'si' | 'no' | ''
+}
+export interface Veicolo extends RecordBase {
+  intestazioni: Intestazione[]
+  marca: string
+  modello: string
+  targa: string                 // MAIUSCOLO senza spazi (normalizzaTarga)
+  telaio: string
+  alimentazione: string
+  data_immatricolazione: string
+  possesso: Possesso
+  stato: StatoVeicolo
+  data_inizio: string           // da quando la vettura è del gruppo
+  data_fine: string             // vendita / restituzione
+  uscita_note: string           // a chi è stata venduta / restituita
+  contratto: ContrattoVeicolo | null   // solo leasing / noleggio
+  conducenti: Conducente[]
+  scadenze: ScadenzaVeicolo[]
+  km: LetturaKm[]
+  coperture: Copertura[]
+  da_verificare: boolean        // caricata dagli Excel del 2023: dati da controllare
+  note: string
+}
+export type TipoMulta = 'multa' | 'cartella_bollo' | 'altro'
+export type StatoMulta = 'da_pagare' | 'pagata' | 'contestata' | 'girata' | 'annullata'
+export interface MultaVeicolo extends RecordBase {
+  veicolo_id: string
+  tipo: TipoMulta
+  ente: string
+  numero_verbale: string
+  data_fatto: string
+  anno_riferimento: number | null   // anno del bollo (cartelle)
+  data_notifica: string
+  scadenza_pagamento: string
+  scadenza_ridotta: string          // pagamento ridotto del 30%
+  scadenza_conducente: string       // termine per comunicare i dati del conducente
+  conducente_comunicato: boolean
+  importo_cent: number | null
+  importo_ridotto_cent: number | null
+  spese_rinotifica_cent: number | null
+  conducente: string
+  stato: StatoMulta
+  data_pagamento: string
+  note: string
+}

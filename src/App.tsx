@@ -24,6 +24,10 @@ const SchedaImmobile = lazy(() => import('./pages/SchedaImmobile'))
 const PaginaComunicazioni = lazy(() => import('./pages/Comunicazioni'))
 const PaginaTributi = lazy(() => import('./pages/Tributi'))
 const PaginaFornitori = lazy(() => import('./pages/Fornitori'))
+const PaginaFlotta = lazy(() => import('./pages/Flotta'))
+const SchedaVettura = lazy(() => import('./pages/SchedaVettura'))
+const StampaVettura = lazy(() => import('./pages/StampaFlotta').then((m) => ({ default: m.StampaVettura })))
+const StampaElencoFlotta = lazy(() => import('./pages/StampaFlotta').then((m) => ({ default: m.StampaElencoFlotta })))
 const StampaLetteraIstat = lazy(() => import('./pages/StampaDocumenti').then((m) => ({ default: m.StampaLetteraIstat })))
 const StampaTributi = lazy(() => import('./pages/StampaTributi'))
 const StampaScadenzaTributi = lazy(() => import('./pages/StampaTributi').then((m) => ({ default: m.StampaScadenzaTributi })))
@@ -42,6 +46,8 @@ function AreaProtetta() {
       <Route path="/stampa/tributi/:tipo/:valore" element={<Guardia sezione="tributi"><StampaTributi /></Guardia>} />
       <Route path="/stampa/fornitori/:tipo/:valore" element={<Guardia sezione="fornitori"><StampaFattureFornitori /></Guardia>} />
       <Route path="/stampa/royalty/:fornitore/:anno" element={<Guardia sezione="fornitori"><StampaRoyalty /></Guardia>} />
+      <Route path="/stampa/flotta/vettura/:id" element={<Guardia sezione="flotta"><StampaVettura /></Guardia>} />
+      <Route path="/stampa/flotta/elenco" element={<Guardia sezione="flotta"><StampaElencoFlotta /></Guardia>} />
       <Route path="/*" element={<AreaConMenu />} />
     </Routes>
   )
@@ -75,6 +81,8 @@ function AreaConMenu() {
         <Route path="/comunicazioni" element={<Guardia sezione="comunicazioni"><PaginaComunicazioni /></Guardia>} />
         <Route path="/tributi" element={<Guardia sezione="tributi"><PaginaTributi /></Guardia>} />
         <Route path="/fornitori" element={<Guardia sezione="fornitori"><PaginaFornitori /></Guardia>} />
+        <Route path="/flotta" element={<Guardia sezione="flotta"><PaginaFlotta /></Guardia>} />
+        <Route path="/flotta/vettura/:id" element={<Guardia sezione="flotta"><SchedaVettura /></Guardia>} />
         <Route path="/importa" element={<Guardia sezione="importa"><PaginaImporta /></Guardia>} />
         <Route path="/storico" element={<Guardia sezione="storico"><PaginaStorico /></Guardia>} />
         <Route path="/impostazioni" element={<Guardia sezione="impostazioni"><Impostazioni /></Guardia>} />

@@ -9,7 +9,9 @@ import {
   impostaDaPagare, inCedolare,
   A_CARICO, MODALITA_INCASSO, MODALITA_REGISTRAZIONE, PERIODICITA, PERIODICITA_PIANO, STATI_CONTRATTO, STATI_MOVIMENTO, STATI_PIANO, TIPI_MOVIMENTO, TIPI_VOCE_CONDOMINIO, TIPOLOGIE_CONTRATTO, TIPOLOGIE_IMMOBILE, etichettaDi, statoIva,
   type Annualita, type Condominio, type Conduttore, type Contratto, type Immobile, type Movimento, type PianoRientro, type Societa, type VoceCondominiale,
+  type Contribuente, type MultaVeicolo, type Veicolo,
 } from './tipi'
+import { righeExcelFlotta } from './flotta'
 import { formattaData, oggiIso } from './utils/formato'
 import { MESI_BREVI as MESI, mesiDellAnno } from './utils/date'
 
@@ -83,5 +85,9 @@ export async function esportaConsultazione(token: string, anno: number): Promise
   fogli.push({ nome: 'Condominio riepilogo', righe: immobili.filter((i) => i.condominio_id || voci.some((v) => v.immobile_id === i.id)).map((i) => { const vs = voci.filter((v) => v.immobile_id === i.id); const np = vs.filter((v) => v.pagata !== 'si'); const c = cond(i.condominio_id); return { 'Società': soc(i.societa_id), 'Immobile': i.indirizzo, 'Condominio': c?.denominazione ?? '', 'Amministratore': c?.amministratore_nome ?? '', 'Telefono': c?.amministratore_telefono ?? '', 'IBAN': c?.iban ?? '', 'Voci': vs.length, 'Totale': eur(vs.reduce((t, v) => t + (v.importo_cent ?? 0), 0)), 'Pagato': eur(vs.filter((v) => v.pagata === 'si').reduce((t, v) => t + (v.importo_cent ?? 0), 0)), 'Da pagare': eur(np.filter((v) => !v.in_piano_id).reduce((t, v) => t + (v.importo_cent ?? 0), 0)), 'Scaduto': eur(np.filter((v) => !v.in_piano_id && v.scadenza && v.scadenza < oggi).reduce((t, v) => t + (v.importo_cent ?? 0), 0)), 'In piano di rientro': eur(np.filter((v) => v.in_piano_id).reduce((t, v) => t + (v.importo_cent ?? 0), 0)), 'Da incassare dal conduttore': eur(vs.filter((v) => (v.quota_conduttore_cent ?? 0) > 0 && v.riaddebitata !== 'si').reduce((t, v) => t + (v.quota_conduttore_cent ?? 0), 0)) } }) })
   fogli.push({ nome: 'Piani di rientro', righe: piani.map((p) => { const rate = voci.filter((v) => v.piano_id === p.id); return { 'Stato': etichettaDi(STATI_PIANO, p.stato), 'Società': soc(imm(p.immobile_id)?.societa_id ?? ''), 'Immobile': imm(p.immobile_id)?.indirizzo ?? '', 'Condominio': cond(p.condominio_id)?.denominazione ?? '', 'Accordo del': formattaData(p.data_accordo), 'Descrizione': p.descrizione, 'Totale': eur(p.importo_totale_cent), 'Rate': p.numero_rate ?? '', 'Importo rata': eur(p.importo_rata_cent), 'Prima scadenza': formattaData(p.prima_scadenza), 'Periodicità': etichettaDi(PERIODICITA_PIANO, p.periodicita), 'Rate pagate': rate.filter((r) => r.pagata === 'si').length, 'Versato': eur(rate.filter((r) => r.pagata === 'si').reduce((t, r) => t + (r.importo_cent ?? 0), 0)), 'Prossima rata': formattaData(rate.filter((r) => r.pagata !== 'si').sort((a, b) => a.scadenza.localeCompare(b.scadenza))[0]?.scadenza), 'Note': p.note } }) })
 
+  // Flotta aziendale (il pulsante dell'Excel di consultazione è solo dell'amministratore)
+  const [veicoli, multe, contribuenti] = await Promise.all([carica<Veicolo>(token, 'veicoli'), carica<MultaVeicolo>(token, 'multe_veicoli'), carica<Contribuente>(token, 'contribuenti')])
+  const flotta = righeExcelFlotta(attivi(veicoli), attivi(multe), attivi(contribuenti))
+  fogli.push({ nome: 'Flotta', righe: flotta.vetture }, { nome: 'Multe flotta', righe: flotta.multe })
   await scaricaExcel('Gestione_Immobili_consultazione', fogli)
 }

@@ -3,10 +3,12 @@ import { FileSpreadsheet, Upload } from 'lucide-react'
 import { Avviso, Bottone, IntestazionePagina, Segmentato, Tabella, TavolaKpi } from '../components/ui'
 import ImportaTributi from '../components/tributi/ImportaTributi'
 import ImportaAnagrafica from '../components/tributi/ImportaAnagrafica'
+import ImportaFlotta from '../components/flotta/ImportaFlotta'
 import { useSoloLettura } from '../components/SoloLettura'
 import { MODO_DEMO } from '../lib/github'
 import { analizzaRendimentiAffitti, preparaImportazione, type PianoImportazione, type RigaImportata } from '../lib/importaExcel'
-import { useSessioneAttiva } from '../lib/sessione'
+import { useSessioneAttiva, useUtente } from '../lib/sessione'
+import { puoVedere } from '../lib/permessi'
 import { aggiornaInsieme, attivi, passo } from '../lib/store'
 import type { Conduttore, Contratto, Immobile, Societa } from '../lib/tipi'
 import { useCollezioni } from '../lib/useCollezioni'
@@ -26,7 +28,8 @@ export default function PaginaImporta() {
   const [fileLocale, setFileLocale] = useState(false)
   const [nomeFile, setNomeFile] = useState<string | null>(null)
   const soloLettura = useSoloLettura()
-  const [scheda, setScheda] = useState<'affitti' | 'tributi' | 'responsabili'>('affitti')
+  const utente = useUtente()
+  const [scheda, setScheda] = useState<'affitti' | 'tributi' | 'responsabili' | 'flotta'>('affitti')
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -77,12 +80,14 @@ export default function PaginaImporta() {
       <IntestazionePagina kicker="Strumenti" titolo="Importa da Excel"
         sottotitolo={scheda === 'affitti'
           ? 'Formato riconosciuto: foglio "Rendimenti Affitti". Vengono lette le colonne Proprietà, Immobile, Conduttore, Affitto e Imposta Registro; le altre vengono ignorate.'
+          : scheda === 'flotta'
+            ? 'Flotta: caricamento iniziale delle vetture dai vecchi Excel (proprietà, noleggi, leasing e vetture vendute). Prima di salvare vedrai l\'anteprima; le targhe già presenti vengono saltate.'
           : scheda === 'responsabili'
             ? 'Responsabili tributi: collega a ogni società il responsabile, l\'email e l\'email in copia del foglio "Anagrafica". Non vengono importati piani né avvisi, quindi niente doppioni.'
             : 'Tributi rateizzati: scegli i file Excel e/o la cartella dei PDF dei piani. Prima di importare vedrai un controllo dei totali società per società. Reimportando, le pratiche già presenti vengono saltate.'}
-        azioni={<Segmentato valore={scheda} onChange={setScheda} opzioni={[{ valore: 'affitti', etichetta: 'Affitti' }, { valore: 'tributi', etichetta: 'Tributi rateizzati' }, { valore: 'responsabili', etichetta: 'Responsabili tributi' }]} />} />
+        azioni={<Segmentato valore={scheda} onChange={setScheda} opzioni={[{ valore: 'affitti', etichetta: 'Affitti' }, { valore: 'tributi', etichetta: 'Tributi rateizzati' }, { valore: 'responsabili', etichetta: 'Responsabili tributi' }, ...(puoVedere(utente, 'flotta') ? [{ valore: 'flotta' as const, etichetta: 'Flotta' }] : [])]} />} />
 
-      {scheda === 'responsabili' ? <ImportaAnagrafica /> : scheda === 'tributi' ? <ImportaTributi /> : <>
+      {scheda === 'flotta' ? <ImportaFlotta /> : scheda === 'responsabili' ? <ImportaAnagrafica /> : scheda === 'tributi' ? <ImportaTributi /> : <>
 
       {soloLettura && <div className="mb-5"><Avviso tipo="info">Hai accesso in sola lettura: l'importazione è riservata a chi può modificare i dati.</Avviso></div>}
       <div className="blueprint flex flex-wrap items-center gap-4 !border-dashed p-7">

@@ -70,7 +70,7 @@ export default function Impostazioni() {
           {admin && <>
           <Riquadro className="px-[22px] py-5 text-sm">
             <h4 className="mb-2">Esportazione Excel di consultazione</h4>
-            <p className="text-neutro-700">Un unico file Excel, leggibile da chiunque anche senza conoscere la situazione: un foglio per sezione (riepilogo per società, società, immobili, conduttori, condomini, contratti attivi e cessati, ISTAT e imposta di registro, canoni {anno} mese per mese, movimenti {anno}, bollettini condominiali, riepilogo condominio, piani di rientro). Nomi al posto dei codici, importi in euro, date italiane.</p>
+            <p className="text-neutro-700">Un unico file Excel, leggibile da chiunque anche senza conoscere la situazione: un foglio per sezione (riepilogo per società, società, immobili, conduttori, condomini, contratti attivi e cessati, ISTAT e imposta di registro, canoni {anno} mese per mese, movimenti {anno}, bollettini condominiali, riepilogo condominio, piani di rientro, vetture e multe della flotta). Nomi al posto dei codici, importi in euro, date italiane.</p>
             <Bottone className="mt-4" disabled={inCorso} onClick={() => sessione && esegui(() => esportaConsultazione(sessione.token, anno))}><Download size={16} /> Scarica l'Excel di consultazione</Bottone>
           </Riquadro>
 

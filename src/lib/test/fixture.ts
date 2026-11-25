@@ -1,5 +1,5 @@
 /** Dati di prova per i test automatici (record minimi, tutti fittizi). */
-import type { Annualita, Contratto, Movimento, Societa } from '../tipi'
+import type { Annualita, Contratto, Contribuente, Movimento, MultaVeicolo, Societa, Veicolo } from '../tipi'
 
 const base = { creato_il: '', creato_da: '', modificato_il: '', modificato_da: '', eliminato_il: null }
 
@@ -39,4 +39,25 @@ export function movimento(parz: Partial<Movimento> = {}): Movimento {
 
 export function societa(parz: Partial<Societa> = {}): Societa {
   return { ...base, id: 's1', ragione_sociale: 'Società di prova srl', tipo: 'societa', partita_iva: '', codice_fiscale: '', sede: '', pec: '', note: '', ...parz }
+}
+
+export function contribuente(parz: Partial<Contribuente> = {}): Contribuente {
+  return { ...base, id: 'A', nome: 'Ufficio Alfa', alias: [], ragione_sociale: '', codice_fiscale: '', partita_iva: '', responsabile: '', email: '', email_cc: '', studio: '', societa_id: '', conduttore_id: '', note: '', ...parz }
+}
+
+/** Vettura di prova (targa inventata), intestata ad "A" da sempre. */
+export function veicolo(parz: Partial<Veicolo> = {}): Veicolo {
+  return {
+    ...base, id: 'v1', intestazioni: [{ contribuente_id: 'A', intestatario_testo: '', dal: '', al: '' }], marca: 'Fiat', modello: 'Panda',
+    targa: 'AB123CD', telaio: '', alimentazione: '', data_immatricolazione: '', possesso: 'proprieta', stato: 'in_uso', data_inizio: '',
+    data_fine: '', uscita_note: '', contratto: null, conducenti: [], scadenze: [], km: [], coperture: [], da_verificare: false, note: '', ...parz,
+  }
+}
+
+export function multa(parz: Partial<MultaVeicolo> = {}): MultaVeicolo {
+  return {
+    ...base, id: 'mu1', veicolo_id: 'v1', tipo: 'multa', ente: 'Comune di prova', numero_verbale: '1', data_fatto: '', anno_riferimento: null,
+    data_notifica: '', scadenza_pagamento: '', scadenza_ridotta: '', scadenza_conducente: '', conducente_comunicato: false,
+    importo_cent: null, importo_ridotto_cent: null, spese_rinotifica_cent: null, conducente: '', stato: 'da_pagare', data_pagamento: '', note: '', ...parz,
+  }
 }

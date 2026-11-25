@@ -15,6 +15,9 @@ export const COLORI_STAMPA = { WebkitPrintColorAdjust: 'exact', printColorAdjust
 /** Foglio A4 verticale con margini di 10 mm (per le stampe fitte di tabelle). */
 export const StileA4Verticale = () => <style>{'@media print { @page { size: A4 portrait; margin: 10mm; } }'}</style>
 
+/** Pagina stampata in A4 orizzontale (tabelle con molte colonne, es. visione generale della flotta). */
+export const StileA4Orizzontale = () => <style>{'@media print { @page { size: A4 landscape; margin: 10mm; } }'}</style>
+
 /**
  * Barra non stampata. `indietro`: indirizzo a cui tornare (senza: pagina precedente). I `children` (filtri, scelte)
  * vanno tra il collegamento e il pulsante: chi li passa ne decide la posizione (es. con "ml-auto").

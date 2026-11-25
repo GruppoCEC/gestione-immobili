@@ -20,6 +20,7 @@ export const SEZIONI: Record<NomeCollezione, string> = {
   voci_condominiali: 'Condominio', piani_rientro: 'Condominio', allegati: 'Allegati',
   comunicazioni: 'Documenti e comunicazioni', tassi_legali: 'Tassi legali',
   contribuenti: 'Tributi', pratiche_tributi: 'Tributi', fatture_fornitori: 'Fornitori',
+  veicoli: 'Flotta', multe_veicoli: 'Flotta',
 }
 
 /* ---------- avvisi brevi (usati anche per "modifiche unite") ---------- */
